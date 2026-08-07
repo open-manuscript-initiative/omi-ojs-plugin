@@ -1,0 +1,25 @@
+.omi-studio-launcher {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 10000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.65rem 1rem;
+  border-radius: 0.25rem;
+  background: #006798;
+  color: #fff !important;
+  font-weight: 600;
+  text-decoration: none !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+}
+
+.omi-studio-launcher:hover,
+.omi-studio-launcher:focus {
+  background: #004f75;
+  color: #fff !important;
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
