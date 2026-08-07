@@ -1,18 +1,39 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: OMI OJS Integration Plugin 1.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-08-07 23:00+0200\n"
+"PO-Revision-Date: 2026-08-07 23:00+0200\n"
+"Last-Translator: Open Manuscript Initiative\n"
+"Language-Team: Hungarian\n"
+"Language: hu\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
 msgid "plugins.generic.studioIntegration.displayName"
 msgstr "Open Manuscript Studio integráció"
+
 msgid "plugins.generic.studioIntegration.description"
 msgstr "Az OJS 3.5 és az Open Manuscript Studio összekapcsolása az OMI Integration API v1 használatával."
+
 msgid "plugins.generic.studioIntegration.openInStudio"
 msgstr "Megnyitás a Studióban"
+
 msgid "plugins.generic.studioIntegration.settings.title"
 msgstr "Open Manuscript Studio integráció"
+
 msgid "plugins.generic.studioIntegration.settings.studioUrl"
 msgstr "Studio URL"
+
 msgid "plugins.generic.studioIntegration.settings.installationId"
 msgstr "Állandó telepítésazonosító (opcionális)"
+
 msgid "plugins.generic.studioIntegration.settings.sharedSecret"
 msgstr "Megosztott titkos kulcs"
+
 msgid "plugins.generic.studioIntegration.settings.tokenTtl"
-msgstr "Indítótokent élettartama másodpercben (60–3600)"
+msgstr "Indítótoken élettartama másodpercben (60–3600)"
+
 msgid "plugins.generic.studioIntegration.settings.invalidUrl"
 msgstr "Adj meg érvényes Studio URL-t."
