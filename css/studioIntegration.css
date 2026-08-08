@@ -23,3 +23,9 @@
   outline: 2px solid currentColor;
   outline-offset: 2px;
 }
+
+.omi-studio-launcher--loading {
+  opacity: 0.65;
+  pointer-events: none;
+  cursor: wait;
+}
