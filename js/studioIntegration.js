@@ -2,7 +2,6 @@
   'use strict';
 
   var lastSubmissionId = null;
-  var requestSerial = 0;
 
   function getConfig() {
     return window.OMI_STUDIO_INTEGRATION || null;
@@ -10,12 +9,7 @@
 
   function getSubmissionId() {
     var url = new URL(window.location.href);
-
-    var queryKeys = [
-      'workflowSubmissionId',
-      'submissionId',
-      'id'
-    ];
+    var queryKeys = ['workflowSubmissionId', 'submissionId', 'id'];
 
     for (var i = 0; i < queryKeys.length; i += 1) {
       var queryValue = url.searchParams.get(queryKeys[i]);
@@ -24,24 +18,16 @@
       }
     }
 
-    var segments = url.pathname
-      .split('/')
-      .filter(Boolean);
+    var segments = url.pathname.split('/').filter(Boolean);
+    var markers = ['workflow', 'submission'];
 
-    var workflowIndex = segments.indexOf('workflow');
-    if (workflowIndex !== -1) {
-      for (var j = workflowIndex + 1; j < segments.length; j += 1) {
-        if (/^[1-9][0-9]*$/.test(segments[j])) {
-          return segments[j];
-        }
-      }
-    }
-
-    var submissionIndex = segments.indexOf('submission');
-    if (submissionIndex !== -1) {
-      for (var k = submissionIndex + 1; k < segments.length; k += 1) {
-        if (/^[1-9][0-9]*$/.test(segments[k])) {
-          return segments[k];
+    for (var m = 0; m < markers.length; m += 1) {
+      var markerIndex = segments.indexOf(markers[m]);
+      if (markerIndex !== -1) {
+        for (var j = markerIndex + 1; j < segments.length; j += 1) {
+          if (/^[1-9][0-9]*$/.test(segments[j])) {
+            return segments[j];
+          }
         }
       }
     }
@@ -56,61 +42,101 @@
     }
   }
 
-  function createLauncher(label) {
-    var link = document.createElement('a');
-    link.id = 'omi-studio-launcher';
-    link.className = 'omi-studio-launcher';
-    link.href = '#';
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = label || 'Open in Studio';
-    link.setAttribute('aria-label', label || 'Open in Studio');
-    link.setAttribute('aria-disabled', 'true');
-    link.classList.add('omi-studio-launcher--loading');
-    document.body.appendChild(link);
-    return link;
+  function setState(link, state, message) {
+    link.classList.remove(
+      'omi-studio-launcher--loading',
+      'omi-studio-launcher--error'
+    );
+
+    if (state === 'loading') {
+      link.classList.add('omi-studio-launcher--loading');
+      link.setAttribute('aria-busy', 'true');
+      link.textContent = message || 'Opening Studio…';
+      return;
+    }
+
+    link.removeAttribute('aria-busy');
+
+    if (state === 'error') {
+      link.classList.add('omi-studio-launcher--error');
+      link.textContent = message || 'Studio launch failed';
+      return;
+    }
+
+    link.textContent = message;
   }
 
-  function requestLaunchUrl(config, submissionId, link) {
-    requestSerial += 1;
-    var serial = requestSerial;
-
+  async function fetchLaunchUrl(config, submissionId) {
     var endpoint = new URL(config.launchEndpoint, window.location.origin);
     endpoint.searchParams.set('submissionId', submissionId);
 
-    fetch(endpoint.toString(), {
+    var response = await fetch(endpoint.toString(), {
       method: 'GET',
       credentials: 'same-origin',
       headers: {
         'Accept': 'application/json'
-      }
-    })
-      .then(function (response) {
-        if (!response.ok) {
-          throw new Error('Launch URL request failed with HTTP ' + response.status + '.');
-        }
-        return response.json();
-      })
-      .then(function (data) {
-        if (
-          serial !== requestSerial ||
-          submissionId !== getSubmissionId() ||
-          !data ||
-          !data.launchUrl
-        ) {
-          return;
-        }
+      },
+      cache: 'no-store'
+    });
 
-        link.href = data.launchUrl;
-        link.classList.remove('omi-studio-launcher--loading');
-        link.removeAttribute('aria-disabled');
-      })
-      .catch(function () {
-        if (serial !== requestSerial) {
-          return;
-        }
-        removeLauncher();
-      });
+    var data = null;
+    try {
+      data = await response.json();
+    } catch (_error) {
+      data = null;
+    }
+
+    if (!response.ok) {
+      var detail = data && data.error && data.error.message
+        ? data.error.message
+        : 'HTTP ' + response.status;
+      throw new Error(detail);
+    }
+
+    if (!data || !data.launchUrl) {
+      throw new Error('The OJS integration did not return a Studio launch URL.');
+    }
+
+    return data.launchUrl;
+  }
+
+  function createLauncher(config, submissionId) {
+    var link = document.createElement('button');
+    var label = config.label || 'Open in Studio';
+
+    link.id = 'omi-studio-launcher';
+    link.className = 'omi-studio-launcher';
+    link.type = 'button';
+    link.textContent = label;
+    link.setAttribute('aria-label', label);
+
+    link.addEventListener('click', async function () {
+      if (link.disabled) {
+        return;
+      }
+
+      link.disabled = true;
+      setState(link, 'loading', 'Opening Studio…');
+
+      try {
+        var launchUrl = await fetchLaunchUrl(config, submissionId);
+        window.location.assign(launchUrl);
+      } catch (error) {
+        var message = error instanceof Error ? error.message : 'Studio launch failed.';
+        console.error('OMI Studio launch failed:', error);
+        setState(link, 'error', message);
+        link.title = message;
+        link.disabled = false;
+
+        window.setTimeout(function () {
+          if (document.body.contains(link)) {
+            setState(link, 'ready', label);
+          }
+        }, 5000);
+      }
+    });
+
+    document.body.appendChild(link);
   }
 
   function mount() {
@@ -135,9 +161,7 @@
 
     lastSubmissionId = submissionId;
     removeLauncher();
-
-    var link = createLauncher(config.label);
-    requestLaunchUrl(config, submissionId, link);
+    createLauncher(config, submissionId);
   }
 
   function scheduleMount() {
