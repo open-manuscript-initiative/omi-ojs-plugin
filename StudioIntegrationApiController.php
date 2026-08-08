@@ -145,8 +145,17 @@ class StudioIntegrationApiController extends PKPBaseController
         ]);
     }
 
-    public function fileContent(IlluminateRequest $illuminateRequest, int $submissionFileId): BinaryFileResponse|JsonResponse
+    public function fileContent(IlluminateRequest $illuminateRequest, $submissionFileId): BinaryFileResponse|JsonResponse
     {
+        if (!is_scalar($submissionFileId) || !ctype_digit((string)$submissionFileId)) {
+            return $this->error('invalid_file_id', 'Invalid submission file ID.', 400);
+        }
+
+        $submissionFileId = (int)$submissionFileId;
+        if ($submissionFileId < 1) {
+            return $this->error('invalid_file_id', 'Invalid submission file ID.', 400);
+        }
+
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
 
