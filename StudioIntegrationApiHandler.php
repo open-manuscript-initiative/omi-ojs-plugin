@@ -16,6 +16,35 @@ class StudioIntegrationApiHandler extends \APP\handler\Handler
         $this->capabilities($args, $request);
     }
 
+    public function launch($args, $request): void
+    {
+        $context = $request->getContext();
+        $user = $request->getUser();
+        $submissionId = (int)$request->getUserVar('submissionId');
+
+        if (!$context) {
+            ApiResponse::error('context_required', 'A journal context is required.', 400);
+        }
+        if (!$user) {
+            ApiResponse::error('authentication_required', 'An authenticated OJS user is required.', 401);
+        }
+        if ($submissionId < 1) {
+            ApiResponse::error('submission_required', 'A submissionId is required.', 400);
+        }
+
+        $launchUrl = $this->plugin->createLaunchUrl($request, $submissionId);
+        if ($launchUrl === null) {
+            ApiResponse::error('launch_not_authorized', 'The user is not authorized to launch this submission in Studio, or the integration is not configured.', 403);
+        }
+
+        ApiResponse::send([
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/ojs',
+            'submissionExternalId' => (string)$submissionId,
+            'launchUrl' => $launchUrl,
+        ]);
+    }
+
     public function capabilities($args, $request): void
     {
         $context = $request->getContext();
@@ -27,7 +56,7 @@ class StudioIntegrationApiHandler extends \APP\handler\Handler
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.1.0',
+                'version' => '1.1.2',
                 'platform' => 'ojs',
             ],
             'context' => [
