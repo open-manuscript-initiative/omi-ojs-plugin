@@ -2,12 +2,15 @@
 namespace APP\plugins\generic\studioIntegration;
 
 use APP\core\Application;
+use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Ojs35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
+use PKP\config\Config;
 use PKP\core\PKPBaseController;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class StudioIntegrationApiController extends PKPBaseController
 {
@@ -35,6 +38,9 @@ class StudioIntegrationApiController extends PKPBaseController
             ->name('api.omiIntegration.contributors');
         Route::get('files', $this->files(...))
             ->name('api.omiIntegration.files');
+        Route::get('files/{submissionFileId}/content', $this->fileContent(...))
+            ->whereNumber('submissionFileId')
+            ->name('api.omiIntegration.fileContent');
     }
 
     public function capabilities(IlluminateRequest $illuminateRequest): JsonResponse
@@ -51,7 +57,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.1.5',
+                'version' => '1.1.6',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -60,6 +66,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'metadata.read',
                 'contributors.read',
                 'files.read',
+                'files.content.read',
             ],
         ]);
     }
@@ -67,9 +74,7 @@ class StudioIntegrationApiController extends PKPBaseController
     public function submission(IlluminateRequest $illuminateRequest): JsonResponse
     {
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
-        if ($authorized instanceof JsonResponse) {
-            return $authorized;
-        }
+        if ($authorized instanceof JsonResponse) return $authorized;
 
         [$claims, $submissionId, $context] = $authorized;
         if (!$this->hasScope($claims, 'metadata.read')) {
@@ -78,9 +83,7 @@ class StudioIntegrationApiController extends PKPBaseController
 
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
-        if (!$submission) {
-            return $this->error('submission_not_found', 'Submission not found.', 404);
-        }
+        if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
 
         return response()->json([
             'protocol' => 'omi-integration/1',
@@ -93,9 +96,7 @@ class StudioIntegrationApiController extends PKPBaseController
     public function contributors(IlluminateRequest $illuminateRequest): JsonResponse
     {
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
-        if ($authorized instanceof JsonResponse) {
-            return $authorized;
-        }
+        if ($authorized instanceof JsonResponse) return $authorized;
 
         [$claims, $submissionId, $context] = $authorized;
         if (!$this->hasScope($claims, 'contributors.read')) {
@@ -104,9 +105,7 @@ class StudioIntegrationApiController extends PKPBaseController
 
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
-        if (!$submission) {
-            return $this->error('submission_not_found', 'Submission not found.', 404);
-        }
+        if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
 
         return response()->json([
             'protocol' => 'omi-integration/1',
@@ -118,9 +117,7 @@ class StudioIntegrationApiController extends PKPBaseController
     public function files(IlluminateRequest $illuminateRequest): JsonResponse
     {
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
-        if ($authorized instanceof JsonResponse) {
-            return $authorized;
-        }
+        if ($authorized instanceof JsonResponse) return $authorized;
 
         [$claims, $submissionId, $context] = $authorized;
         if (!$this->hasScope($claims, 'files.read')) {
@@ -129,18 +126,59 @@ class StudioIntegrationApiController extends PKPBaseController
 
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
-        if (!$submission) {
-            return $this->error('submission_not_found', 'Submission not found.', 404);
-        }
+        if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
+
+        $files = array_map(function (array $file): array {
+            $file['contentPath'] = 'files/' . rawurlencode((string)$file['externalId']) . '/content';
+            return $file;
+        }, $adapter->mapFiles($submission));
 
         return response()->json([
             'protocol' => 'omi-integration/1',
             'submissionExternalId' => (string)$submissionId,
-            'files' => $adapter->mapFiles($submission),
+            'files' => $files,
             'binaryTransfer' => [
-                'available' => false,
-                'reason' => 'Binary transfer is intentionally deferred to a later profile capability.',
+                'available' => true,
+                'authorization' => 'OMI launch assertion',
+                'scope' => 'files.read',
             ],
+        ]);
+    }
+
+    public function fileContent(IlluminateRequest $illuminateRequest, int $submissionFileId): BinaryFileResponse|JsonResponse
+    {
+        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+        if ($authorized instanceof JsonResponse) return $authorized;
+
+        [$claims, $submissionId] = $authorized;
+        if (!$this->hasScope($claims, 'files.read')) {
+            return $this->error('insufficient_scope', 'The signed assertion does not grant the required scope.', 403, ['required' => 'files.read']);
+        }
+
+        $submissionFile = Repo::submissionFile()->get($submissionFileId, $submissionId);
+        if (!$submissionFile || (int)$submissionFile->getData('submissionId') !== $submissionId) {
+            return $this->error('file_not_found', 'Submission file not found.', 404);
+        }
+
+        $fileId = (int)$submissionFile->getData('fileId');
+        $storedFile = $fileId > 0 ? app()->get('file')->get($fileId) : null;
+        if (!$storedFile || empty($storedFile->path)) {
+            return $this->error('file_not_found', 'Stored file content not found.', 404);
+        }
+
+        $absolutePath = rtrim((string)Config::getVar('files', 'files_dir'), '/') . '/' . ltrim((string)$storedFile->path, '/');
+        if (!is_file($absolutePath) || !is_readable($absolutePath)) {
+            return $this->error('file_not_readable', 'Stored file content is not readable.', 404);
+        }
+
+        $name = (string)($submissionFile->getData('originalFileName') ?? $submissionFile->getData('name', Application::get()->getRequest()->getContext()?->getPrimaryLocale()) ?? ('submission-file-' . $submissionFileId));
+        $mediaType = (string)($submissionFile->getData('mimetype') ?? 'application/octet-stream');
+
+        return response()->file($absolutePath, [
+            'Content-Type' => $mediaType,
+            'Content-Disposition' => "attachment; filename*=UTF-8''" . rawurlencode($name),
+            'Cache-Control' => 'no-store, private',
+            'X-Content-Type-Options' => 'nosniff',
         ]);
     }
 
@@ -148,10 +186,7 @@ class StudioIntegrationApiController extends PKPBaseController
     {
         $request = Application::get()->getRequest();
         $context = $request->getContext();
-
-        if (!$context) {
-            return $this->error('context_required', 'A journal context is required.', 400);
-        }
+        if (!$context) return $this->error('context_required', 'A journal context is required.', 400);
 
         $authorization = trim((string)$illuminateRequest->header('Authorization', ''));
         if (!preg_match('/^OMI\s+([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/', $authorization, $matches)) {
@@ -159,19 +194,13 @@ class StudioIntegrationApiController extends PKPBaseController
         }
 
         $secret = (string)$this->plugin->getSetting($context->getId(), 'sharedSecret');
-        if ($secret === '') {
-            return $this->error('integration_not_configured', 'The integration shared secret is not configured.', 503);
-        }
+        if ($secret === '') return $this->error('integration_not_configured', 'The integration shared secret is not configured.', 503);
 
         $claims = LaunchToken::verify($matches[1], $matches[2], $secret, $context->getId());
-        if (!$claims) {
-            return $this->error('invalid_assertion', 'The signed OMI assertion is invalid or expired.', 401);
-        }
+        if (!$claims) return $this->error('invalid_assertion', 'The signed OMI assertion is invalid or expired.', 401);
 
         $submissionId = (int)($claims['submission']['externalId'] ?? 0);
-        if ($submissionId < 1) {
-            return $this->error('submission_required', 'The assertion does not identify a submission.', 400);
-        }
+        if ($submissionId < 1) return $this->error('submission_required', 'The assertion does not identify a submission.', 400);
 
         return [$claims, $submissionId, $context];
     }
@@ -195,10 +224,7 @@ class StudioIntegrationApiController extends PKPBaseController
     private function error(string $code, string $message, int $status, array $extra = []): JsonResponse
     {
         return response()->json([
-            'error' => array_merge([
-                'code' => $code,
-                'message' => $message,
-            ], $extra),
+            'error' => array_merge(['code' => $code, 'message' => $message], $extra),
         ], $status);
     }
 }
