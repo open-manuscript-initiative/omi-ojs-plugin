@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3 — 2026-08-08
+
+- Changed the Studio launcher to request a fresh signed launch URL only when the user clicks the button.
+- Added visible loading and error states instead of silently disabling or removing the launcher when the launch request fails.
+- Added browser console diagnostics for failed launch requests.
+- Switched the launcher to same-tab navigation after successful launch URL creation, avoiding popup-blocker ambiguity.
+- Added `cache: no-store` for launch URL requests and bumped frontend asset cache keys.
+
 ## 1.1.2 — 2026-08-08
 
 - Fixed the OJS 3.5 workflow launcher so it no longer depends on PHP resolving the submission ID during template rendering.
@@ -8,6 +16,7 @@
 - Added support for dynamic OJS workflow navigation through History API and DOM mutation detection.
 - Kept the shared secret and HMAC signing server-side; the browser receives only a short-lived signed Studio launch URL.
 - Added a loading state for the launcher while the authorized launch URL is being created.
+- Added cache-busting to the launcher JavaScript and stylesheet URLs.
 
 ## 1.1.1 — 2026-08-07
 
