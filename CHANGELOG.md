@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.2 — 2026-08-08
+
+- Fixed the OJS 3.5 workflow launcher so it no longer depends on PHP resolving the submission ID during template rendering.
+- Added an authenticated, authorization-checked launch URL endpoint inside the plugin.
+- Updated the browser integration client to resolve the active submission from OJS workflow URLs and request a short-lived launch URL on demand.
+- Added support for dynamic OJS workflow navigation through History API and DOM mutation detection.
+- Kept the shared secret and HMAC signing server-side; the browser receives only a short-lived signed Studio launch URL.
+- Added a loading state for the launcher while the authorized launch URL is being created.
+
 ## 1.1.1 — 2026-08-07
 
 - Fixed OJS 3.5 localization compatibility by adding valid Gettext PO headers to the English, Hungarian and German locale files.
