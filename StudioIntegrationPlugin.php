@@ -5,6 +5,7 @@ use APP\core\Application;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use APP\plugins\generic\studioIntegration\classes\StudioIntegrationSettingsForm;
+use PKP\core\APIRouter;
 use PKP\core\JSONMessage;
 use PKP\core\PKPApplication;
 use PKP\linkAction\LinkAction;
@@ -24,6 +25,7 @@ class StudioIntegrationPlugin extends GenericPlugin
         if ($success && $this->getEnabled($mainContextId)) {
             Hook::add('TemplateManager::display', $this->displayTemplateHook(...));
             Hook::add('LoadHandler', $this->loadApiHandler(...));
+            Hook::add('APIHandler::endpoints::plugin', $this->registerApiController(...));
         }
         return $success;
     }
@@ -78,6 +80,15 @@ class StudioIntegrationPlugin extends GenericPlugin
         require_once($this->getPluginPath() . '/StudioIntegrationApiHandler.php');
         $handler = new StudioIntegrationApiHandler($this);
         return true;
+    }
+
+    public function registerApiController(string $hookName, APIRouter $apiRouter): bool
+    {
+        require_once($this->getPluginPath() . '/StudioIntegrationApiController.php');
+        $apiRouter->registerPluginApiControllers([
+            new StudioIntegrationApiController($this),
+        ]);
+        return Hook::CONTINUE;
     }
 
     public function displayTemplateHook(string $hookName, array $params): bool
@@ -175,6 +186,13 @@ class StudioIntegrationPlugin extends GenericPlugin
         }
 
         $now = time();
+        $apiBaseUrl = $request->getDispatcher()->url(
+            $request,
+            Application::ROUTE_API,
+            $context->getPath(),
+            'omi-integration'
+        );
+
         $claims = [
             'protocol' => 'omi-integration/1',
             'profile' => 'omi-integration/1/ojs',
@@ -198,7 +216,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             'exp' => $now + $ttl,
             'nonce' => bin2hex(random_bytes(16)),
             'externalBaseUrl' => $request->getBaseUrl(),
-            'apiBaseUrl' => $request->url($context->getPath(), 'omiIntegration'),
+            'apiBaseUrl' => $apiBaseUrl,
         ];
 
         try {
