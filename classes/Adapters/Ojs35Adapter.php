@@ -26,7 +26,7 @@ final class Ojs35Adapter
             'title' => $publication ? (array)$publication->getData('title') : [],
             'subtitle' => $publication ? (array)$publication->getData('subtitle') : [],
             'abstract' => $publication ? (array)$publication->getData('abstract') : [],
-            'keywords' => $publication ? (array)$publication->getData('keywords') : [],
+            'keywords' => $publication ? $this->normalizeLocalizedKeywords($publication->getData('keywords')) : [],
             'publicationExternalId' => $publication ? (string)$publication->getId() : null,
             'updatedAt' => $this->formatDate($publication?->getData('lastModified') ?? $submission->getData('lastModified')),
             'extensions' => [
@@ -93,6 +93,56 @@ final class Ojs35Adapter
                 'updatedAt' => $this->formatDate($file->getData('updatedAt')),
             ];
         }
+        return $result;
+    }
+
+    private function normalizeLocalizedKeywords(mixed $value): array
+    {
+        if ($value === null) {
+            return [];
+        }
+
+        if (is_object($value)) {
+            if ($value instanceof \Traversable) {
+                $value = iterator_to_array($value);
+            } else {
+                $value = (array)$value;
+            }
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($value as $locale => $keywords) {
+            if (is_object($keywords) && $keywords instanceof \Traversable) {
+                $keywords = iterator_to_array($keywords);
+            }
+
+            if (is_string($keywords)) {
+                $keywords = preg_split('/\s*[;,]\s*/u', $keywords, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            }
+
+            if (!is_array($keywords)) {
+                continue;
+            }
+
+            $normalized = [];
+            foreach ($keywords as $keyword) {
+                if (is_scalar($keyword)) {
+                    $text = trim((string)$keyword);
+                    if ($text !== '') {
+                        $normalized[] = $text;
+                    }
+                }
+            }
+
+            if ($normalized !== []) {
+                $result[(string)$locale] = array_values(array_unique($normalized));
+            }
+        }
+
         return $result;
     }
 
