@@ -16,7 +16,7 @@ final class Ojs35Adapter
 
     public function mapSubmission(object $submission): array
     {
-        $publication = $submission->getCurrentPublication();
+        $publication = $this->getHydratedCurrentPublication($submission);
         $primaryLocale = (string)$submission->getData('locale');
         return [
             'externalId' => (string)$submission->getId(),
@@ -43,7 +43,7 @@ final class Ojs35Adapter
 
     public function mapContributors(object $submission): array
     {
-        $publication = $submission->getCurrentPublication();
+        $publication = $this->getHydratedCurrentPublication($submission);
         if (!$publication) {
             return [];
         }
@@ -99,6 +99,31 @@ final class Ojs35Adapter
         return $result;
     }
 
+    /**
+     * Re-fetch the current publication through the Publication repository.
+     *
+     * Submission::getCurrentPublication() may expose the publication object
+     * already attached to the submission without all repository-enriched
+     * properties. In OJS 3.5, keywords, subjects, disciplines and supporting
+     * agencies are controlled-vocabulary properties populated by the
+     * Publication DAO when Repo::publication()->get() hydrates the object.
+     */
+    private function getHydratedCurrentPublication(object $submission): ?object
+    {
+        $current = $submission->getCurrentPublication();
+        if (!$current) {
+            return null;
+        }
+
+        $publicationId = (int)$current->getId();
+        $submissionId = (int)$submission->getId();
+        if ($publicationId <= 0 || $submissionId <= 0) {
+            return $current;
+        }
+
+        return Repo::publication()->get($publicationId, $submissionId) ?? $current;
+    }
+
     private function normalizeLocalizedKeywords(mixed $value, string $primaryLocale): array
     {
         if ($value === null) {
@@ -122,8 +147,6 @@ final class Ojs35Adapter
             return [];
         }
 
-        // OJS installations may expose keywords as a direct list for the
-        // submission locale instead of a locale-keyed map.
         if (array_is_list($value)) {
             $normalized = $this->normalizeKeywordList($value);
             return $normalized === [] ? [] : [$primaryLocale => $normalized];
