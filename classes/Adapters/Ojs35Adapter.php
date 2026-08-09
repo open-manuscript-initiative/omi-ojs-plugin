@@ -17,16 +17,19 @@ final class Ojs35Adapter
     public function mapSubmission(object $submission): array
     {
         $publication = $submission->getCurrentPublication();
+        $primaryLocale = (string)$submission->getData('locale');
         return [
             'externalId' => (string)$submission->getId(),
             'type' => 'article',
             'status' => $this->mapStage((int)$submission->getData('stageId')),
             'stageId' => (int)$submission->getData('stageId'),
-            'primaryLocale' => (string)$submission->getData('locale'),
+            'primaryLocale' => $primaryLocale,
             'title' => $publication ? (array)$publication->getData('title') : [],
             'subtitle' => $publication ? (array)$publication->getData('subtitle') : [],
             'abstract' => $publication ? (array)$publication->getData('abstract') : [],
-            'keywords' => $publication ? $this->normalizeLocalizedKeywords($publication->getData('keywords')) : [],
+            'keywords' => $publication
+                ? $this->normalizeLocalizedKeywords($publication->getData('keywords'), $primaryLocale)
+                : [],
             'publicationExternalId' => $publication ? (string)$publication->getId() : null,
             'updatedAt' => $this->formatDate($publication?->getData('lastModified') ?? $submission->getData('lastModified')),
             'extensions' => [
@@ -96,7 +99,7 @@ final class Ojs35Adapter
         return $result;
     }
 
-    private function normalizeLocalizedKeywords(mixed $value): array
+    private function normalizeLocalizedKeywords(mixed $value, string $primaryLocale): array
     {
         if ($value === null) {
             return [];
@@ -110,8 +113,20 @@ final class Ojs35Adapter
             }
         }
 
+        if (is_string($value)) {
+            $normalized = $this->normalizeKeywordList($value);
+            return $normalized === [] ? [] : [$primaryLocale => $normalized];
+        }
+
         if (!is_array($value)) {
             return [];
+        }
+
+        // OJS installations may expose keywords as a direct list for the
+        // submission locale instead of a locale-keyed map.
+        if (array_is_list($value)) {
+            $normalized = $this->normalizeKeywordList($value);
+            return $normalized === [] ? [] : [$primaryLocale => $normalized];
         }
 
         $result = [];
@@ -120,30 +135,36 @@ final class Ojs35Adapter
                 $keywords = iterator_to_array($keywords);
             }
 
-            if (is_string($keywords)) {
-                $keywords = preg_split('/\s*[;,]\s*/u', $keywords, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-            }
-
-            if (!is_array($keywords)) {
-                continue;
-            }
-
-            $normalized = [];
-            foreach ($keywords as $keyword) {
-                if (is_scalar($keyword)) {
-                    $text = trim((string)$keyword);
-                    if ($text !== '') {
-                        $normalized[] = $text;
-                    }
-                }
-            }
-
+            $normalized = $this->normalizeKeywordList($keywords);
             if ($normalized !== []) {
-                $result[(string)$locale] = array_values(array_unique($normalized));
+                $result[(string)$locale] = $normalized;
             }
         }
 
         return $result;
+    }
+
+    private function normalizeKeywordList(mixed $value): array
+    {
+        if (is_string($value)) {
+            $value = preg_split('/\s*[;,]\s*/u', $value, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($value as $keyword) {
+            if (is_scalar($keyword)) {
+                $text = trim((string)$keyword);
+                if ($text !== '') {
+                    $normalized[] = $text;
+                }
+            }
+        }
+
+        return array_values(array_unique($normalized));
     }
 
     private function mapStage(int $stageId): string
