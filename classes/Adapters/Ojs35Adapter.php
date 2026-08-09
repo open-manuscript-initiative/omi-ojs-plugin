@@ -20,6 +20,39 @@ final class Ojs35Adapter
     {
         $publication = $this->getHydratedCurrentPublication($submission);
         $primaryLocale = (string)$submission->getData('locale');
+
+        $publicationMetadata = $publication
+            ? [
+                'subjects' => $this->getControlledVocab(
+                    $publication,
+                    ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_SUBJECT,
+                    $primaryLocale
+                ),
+                'disciplines' => $this->getControlledVocab(
+                    $publication,
+                    ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_DISCIPLINE,
+                    $primaryLocale
+                ),
+                'supportingAgencies' => $this->getControlledVocab(
+                    $publication,
+                    ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_AGENCY,
+                    $primaryLocale
+                ),
+                'coverage' => $this->normalizeLocaleObject($publication->getData('coverage')),
+                'rights' => $this->normalizeLocaleObject($publication->getData('rights')),
+                'source' => $this->normalizeLocaleObject($publication->getData('source')),
+                'type' => $this->normalizeLocaleObject($publication->getData('type')),
+                'dataAvailability' => $this->normalizeLocaleObject($publication->getData('dataAvailability')),
+                'languages' => $this->normalizeLocalizedKeywords($publication->getData('languages'), $primaryLocale),
+                'publisherId' => $this->nullableString($publication->getData('pub-id::publisher-id')),
+                'licenseUrl' => $this->nullableString($publication->getData('licenseUrl')),
+                'copyrightHolder' => $this->normalizeLocaleObject($publication->getData('copyrightHolder')),
+                'copyrightYear' => $publication->getData('copyrightYear') !== null
+                    ? (int)$publication->getData('copyrightYear')
+                    : null,
+            ]
+            : [];
+
         return [
             'externalId' => (string)$submission->getId(),
             'type' => 'article',
@@ -32,13 +65,22 @@ final class Ojs35Adapter
             'keywords' => $publication
                 ? $this->getPublicationKeywords($publication, $primaryLocale)
                 : [],
+            'metadata' => $publicationMetadata,
             'publicationExternalId' => $publication ? (string)$publication->getId() : null,
             'updatedAt' => $this->formatDate($publication?->getData('lastModified') ?? $submission->getData('lastModified')),
             'extensions' => [
                 'org.pkp.ojs' => [
                     'stageId' => (int)$submission->getData('stageId'),
                     'status' => $submission->getData('status'),
+                    'publicationId' => $publication ? (int)$publication->getId() : null,
                 ],
+                // These fields can be provided by Open Science / custom OJS
+                // metadata plugins. They are deliberately kept outside the
+                // portable OMI core because they are not part of the OJS 3.5
+                // Publication REST schema supplied by PKP.
+                'org.pkp.ojs.openScience' => $publication
+                    ? $this->mapOpenScienceExtension($publication)
+                    : [],
             ],
         ];
     }
@@ -101,9 +143,6 @@ final class Ojs35Adapter
         return $result;
     }
 
-    /**
-     * Re-fetch the current publication through the Publication repository.
-     */
     private function getHydratedCurrentPublication(object $submission): ?object
     {
         $current = $submission->getCurrentPublication();
@@ -120,28 +159,63 @@ final class Ojs35Adapter
         return Repo::publication()->get($publicationId, $submissionId) ?? $current;
     }
 
-    /**
-     * Read keywords from the same controlled-vocabulary repository used by
-     * OJS's Publication DAO. Passing false for $asEntryData is important in
-     * OJS 3.5: it returns the localized keyword strings instead of entry-data
-     * arrays such as ['name' => 'keyword'].
-     */
     private function getPublicationKeywords(object $publication, string $primaryLocale): array
     {
+        return $this->getControlledVocab(
+            $publication,
+            ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_KEYWORD,
+            $primaryLocale
+        );
+    }
+
+    private function getControlledVocab(
+        object $publication,
+        string $symbolic,
+        string $primaryLocale
+    ): array {
         $publicationId = (int)$publication->getId();
         if ($publicationId <= 0) {
             return [];
         }
 
-        $keywords = Repo::controlledVocab()->getBySymbolic(
-            ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_KEYWORD,
+        $values = Repo::controlledVocab()->getBySymbolic(
+            $symbolic,
             Application::ASSOC_TYPE_PUBLICATION,
             $publicationId,
             [],
             false
         );
 
-        return $this->normalizeLocalizedKeywords($keywords, $primaryLocale);
+        return $this->normalizeLocalizedKeywords($values, $primaryLocale);
+    }
+
+    private function normalizeLocaleObject(mixed $value): array
+    {
+        if ($value === null) {
+            return [];
+        }
+
+        if (is_object($value)) {
+            $value = $value instanceof \Traversable
+                ? iterator_to_array($value)
+                : (array)$value;
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($value as $locale => $text) {
+            if (!is_scalar($text)) {
+                continue;
+            }
+            $normalized = trim((string)$text);
+            if ($normalized !== '') {
+                $result[(string)$locale] = $normalized;
+            }
+        }
+        return $result;
     }
 
     private function normalizeLocalizedKeywords(mixed $value, string $primaryLocale): array
@@ -208,6 +282,35 @@ final class Ojs35Adapter
         }
 
         return array_values(array_unique($normalized));
+    }
+
+    private function mapOpenScienceExtension(object $publication): array
+    {
+        $result = [];
+        foreach ([
+            'openData',
+            'openMaterials',
+            'preregistered',
+            'preregisteredPlus',
+        ] as $property) {
+            $value = $publication->getData($property);
+            if ($value === null || $value === '' || $value === []) {
+                continue;
+            }
+            $result[$property] = is_array($value)
+                ? $this->normalizeLocaleObject($value)
+                : $value;
+        }
+        return $result;
+    }
+
+    private function nullableString(mixed $value): ?string
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+        $text = trim((string)$value);
+        return $text === '' ? null : $text;
     }
 
     private function mapStage(int $stageId): string
