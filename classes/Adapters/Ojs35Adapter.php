@@ -1,7 +1,9 @@
 <?php
 namespace APP\plugins\generic\studioIntegration\classes\Adapters;
 
+use APP\core\Application;
 use APP\facades\Repo;
+use PKP\controlledVocab\ControlledVocab;
 
 final class Ojs35Adapter
 {
@@ -28,7 +30,7 @@ final class Ojs35Adapter
             'subtitle' => $publication ? (array)$publication->getData('subtitle') : [],
             'abstract' => $publication ? (array)$publication->getData('abstract') : [],
             'keywords' => $publication
-                ? $this->normalizeLocalizedKeywords($publication->getData('keywords'), $primaryLocale)
+                ? $this->getPublicationKeywords($publication, $primaryLocale)
                 : [],
             'publicationExternalId' => $publication ? (string)$publication->getId() : null,
             'updatedAt' => $this->formatDate($publication?->getData('lastModified') ?? $submission->getData('lastModified')),
@@ -101,12 +103,6 @@ final class Ojs35Adapter
 
     /**
      * Re-fetch the current publication through the Publication repository.
-     *
-     * Submission::getCurrentPublication() may expose the publication object
-     * already attached to the submission without all repository-enriched
-     * properties. In OJS 3.5, keywords, subjects, disciplines and supporting
-     * agencies are controlled-vocabulary properties populated by the
-     * Publication DAO when Repo::publication()->get() hydrates the object.
      */
     private function getHydratedCurrentPublication(object $submission): ?object
     {
@@ -122,6 +118,30 @@ final class Ojs35Adapter
         }
 
         return Repo::publication()->get($publicationId, $submissionId) ?? $current;
+    }
+
+    /**
+     * Read keywords from the same controlled-vocabulary repository used by
+     * OJS's Publication DAO. Passing false for $asEntryData is important in
+     * OJS 3.5: it returns the localized keyword strings instead of entry-data
+     * arrays such as ['name' => 'keyword'].
+     */
+    private function getPublicationKeywords(object $publication, string $primaryLocale): array
+    {
+        $publicationId = (int)$publication->getId();
+        if ($publicationId <= 0) {
+            return [];
+        }
+
+        $keywords = Repo::controlledVocab()->getBySymbolic(
+            ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_KEYWORD,
+            Application::ASSOC_TYPE_PUBLICATION,
+            $publicationId,
+            [],
+            false
+        );
+
+        return $this->normalizeLocalizedKeywords($keywords, $primaryLocale);
     }
 
     private function normalizeLocalizedKeywords(mixed $value, string $primaryLocale): array
