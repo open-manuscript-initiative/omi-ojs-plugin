@@ -12,17 +12,12 @@ class StudioIntegrationApiHandler extends Handler
     {
         parent::__construct();
         $this->plugin = $plugin;
-        $this->addRoleAssignment(
-            [
-                ROLE_ID_SITE_ADMIN,
-                ROLE_ID_MANAGER,
-                ROLE_ID_SUB_EDITOR,
-                ROLE_ID_ASSISTANT,
-                ROLE_ID_REVIEWER,
-                ROLE_ID_AUTHOR,
-            ],
-            ['launch']
-        );
+
+        // Do not add a PKP role assignment gate here. The launch operation
+        // performs stricter role and submission-level checks itself through
+        // resolveLaunchMode(), createLaunchUrl(), and createReviewerLaunchUrl().
+        // Keeping both gates caused valid editorial users to be rejected by
+        // PKPHandler before launch() could perform the authoritative checks.
     }
 
     public function launch(array $args, $request)
