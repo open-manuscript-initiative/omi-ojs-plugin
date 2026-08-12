@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.16 — 2026-08-12
+
+- Fixed the OJS browser launcher to unwrap PKP `JSONMessage` responses and read `content.launchUrl` as well as a top-level `launchUrl`.
+- Fixed a false “The OJS integration did not return a Studio launch URL” error when the backend had actually returned a valid launch URL.
+- Made launch-mode resolution role-aware on the server: editorial roles always receive the normal editor launch, even while viewing the Review stage.
+- Reviewer mode is only selected for reviewer-role users requesting the reviewer launch path.
+- Editor launches retain `contributors.read`; reviewer launches remain isolated from contributor metadata.
+- Added the cache-busted `studioIntegration-1.1.6.js` launcher asset.
+
 ## 1.1.14 — 2026-08-12
 
 - Added a dedicated Studio launcher to the OJS reviewer page.
