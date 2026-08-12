@@ -42,8 +42,9 @@ class StudioIntegrationApiHandler extends Handler
             ]);
         }
 
-        $mode = (string)$request->getUserVar('mode');
-        $launchUrl = $mode === 'review'
+        $requestedMode = (string)$request->getUserVar('mode');
+        $resolvedMode = $this->plugin->resolveLaunchMode($request, $requestedMode);
+        $launchUrl = $resolvedMode === 'review'
             ? $this->plugin->createReviewerLaunchUrl($request, $submissionId)
             : $this->plugin->createLaunchUrl($request, $submissionId);
 
@@ -51,13 +52,16 @@ class StudioIntegrationApiHandler extends Handler
             return new JSONMessage(false, [
                 'error' => [
                     'code' => 'LAUNCH_FORBIDDEN',
-                    'message' => $mode === 'review'
+                    'message' => $resolvedMode === 'review'
                         ? 'The current reviewer cannot open this submission in Open Manuscript Studio review mode.'
                         : 'The current user cannot launch this submission in Open Manuscript Studio.',
                 ],
             ]);
         }
 
-        return new JSONMessage(true, ['launchUrl' => $launchUrl]);
+        return new JSONMessage(true, [
+            'launchUrl' => $launchUrl,
+            'mode' => $resolvedMode,
+        ]);
     }
 }

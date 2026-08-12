@@ -147,8 +147,8 @@ class StudioIntegrationPlugin extends GenericPlugin
             ['contexts' => ['backend']]
         );
         $templateMgr->addJavaScript(
-            'studioIntegration115',
-            $pluginBase . '/js/studioIntegration-1.1.5.js',
+            'studioIntegration116',
+            $pluginBase . '/js/studioIntegration-1.1.6.js',
             ['contexts' => ['backend']]
         );
         $templateMgr->addStyleSheet(
@@ -159,6 +159,38 @@ class StudioIntegrationPlugin extends GenericPlugin
 
         $this->assetsInjected = true;
         return false;
+    }
+
+    public function resolveLaunchMode($request, string $requestedMode): string
+    {
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user) {
+            return 'editor';
+        }
+
+        // Editorial authority always wins over page-derived review mode. This
+        // prevents editors viewing the Review stage from being downgraded to a
+        // reviewer launch merely because the current OJS page is review-related.
+        if (
+            $user->hasRole([
+                Role::ROLE_ID_MANAGER,
+                Role::ROLE_ID_SUB_EDITOR,
+                Role::ROLE_ID_ASSISTANT,
+            ], $context->getId()) ||
+            $user->hasRole([Role::ROLE_ID_SITE_ADMIN], Application::SITE_CONTEXT_ID)
+        ) {
+            return 'editor';
+        }
+
+        if (
+            $requestedMode === 'review' &&
+            $user->hasRole([Role::ROLE_ID_REVIEWER], $context->getId())
+        ) {
+            return 'review';
+        }
+
+        return 'editor';
     }
 
     public function createLaunchUrl($request, int $submissionId): ?string
