@@ -110,14 +110,22 @@ class StudioIntegrationPlugin extends GenericPlugin
             return false;
         }
 
-        $reviewerMode = $requestedPage === 'reviewer';
+        // Resolve the role before rendering the launcher. The page name alone
+        // must never force an editorial user into reviewer mode. Editorial
+        // roles have priority in resolveLaunchMode(), including when the same
+        // OJS account also has author or reviewer roles.
+        $launchMode = $this->resolveLaunchMode(
+            $request,
+            $requestedPage === 'reviewer' ? 'review' : 'auto'
+        );
+        $reviewerMode = $launchMode === 'review';
         $contextId = $context->getId();
         $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
         if ($studioUrl === '') {
             return false;
         }
 
-        if (!$reviewerMode && $this->ensureSharedSecret($contextId) === '') {
+        if ($launchMode !== 'review' && $this->ensureSharedSecret($contextId) === '') {
             return false;
         }
 
@@ -131,7 +139,7 @@ class StudioIntegrationPlugin extends GenericPlugin
 
         $config = json_encode([
             'launchEndpoint' => $launchEndpoint,
-            'mode' => $reviewerMode ? 'review' : 'auto',
+            'mode' => $launchMode,
             'label' => $reviewerMode
                 ? __('plugins.generic.studioIntegration.openInStudioForReview')
                 : __('plugins.generic.studioIntegration.openInStudio'),
