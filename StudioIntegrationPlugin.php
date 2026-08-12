@@ -131,7 +131,7 @@ class StudioIntegrationPlugin extends GenericPlugin
 
         $config = json_encode([
             'launchEndpoint' => $launchEndpoint,
-            'mode' => $reviewerMode ? 'review' : 'editor',
+            'mode' => $reviewerMode ? 'review' : 'auto',
             'label' => $reviewerMode
                 ? __('plugins.generic.studioIntegration.openInStudioForReview')
                 : __('plugins.generic.studioIntegration.openInStudio'),
@@ -147,8 +147,8 @@ class StudioIntegrationPlugin extends GenericPlugin
             ['contexts' => ['backend']]
         );
         $templateMgr->addJavaScript(
-            'studioIntegration116',
-            $pluginBase . '/js/studioIntegration-1.1.6.js',
+            'studioIntegration117',
+            $pluginBase . '/js/studioIntegration-1.1.7.js',
             ['contexts' => ['backend']]
         );
         $templateMgr->addStyleSheet(
@@ -169,17 +169,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             return 'editor';
         }
 
-        // Editorial authority always wins over page-derived review mode. This
-        // prevents editors viewing the Review stage from being downgraded to a
-        // reviewer launch merely because the current OJS page is review-related.
-        if (
-            $user->hasRole([
-                Role::ROLE_ID_MANAGER,
-                Role::ROLE_ID_SUB_EDITOR,
-                Role::ROLE_ID_ASSISTANT,
-            ], $context->getId()) ||
-            $user->hasRole([Role::ROLE_ID_SITE_ADMIN], Application::SITE_CONTEXT_ID)
-        ) {
+        if ($this->isEditorialUser($user, $context)) {
             return 'editor';
         }
 
@@ -190,15 +180,35 @@ class StudioIntegrationPlugin extends GenericPlugin
             return 'review';
         }
 
+        if ($user->hasRole([Role::ROLE_ID_AUTHOR], $context->getId())) {
+            return 'author';
+        }
+
+        if ($user->hasRole([Role::ROLE_ID_REVIEWER], $context->getId())) {
+            return 'review';
+        }
+
         return 'editor';
     }
 
-    public function createLaunchUrl($request, int $submissionId): ?string
+    public function createLaunchUrl($request, int $submissionId, string $mode = 'editor'): ?string
     {
         $context = $request->getContext();
         $user = $request->getUser();
 
         if (!$context || !$user || $submissionId < 1) {
+            return null;
+        }
+
+        if ($mode === 'editor') {
+            if (!$this->isEditorialUser($user, $context)) {
+                return null;
+            }
+        } elseif ($mode === 'author') {
+            if (!$user->hasRole([Role::ROLE_ID_AUTHOR], $context->getId())) {
+                return null;
+            }
+        } else {
             return null;
         }
 
@@ -230,6 +240,23 @@ class StudioIntegrationPlugin extends GenericPlugin
             'omi-integration'
         );
 
+        $scope = $mode === 'editor'
+            ? [
+                'metadata.read',
+                'contributors.read',
+                'files.read',
+                'manuscript.read',
+                'manuscript.write',
+                'revision.write',
+            ]
+            : [
+                'metadata.read',
+                'files.read',
+                'manuscript.read',
+                'manuscript.write',
+                'revision.write',
+            ];
+
         $claims = [
             'protocol' => 'omi-integration/1',
             'profile' => 'omi-integration/1/ojs',
@@ -241,14 +268,8 @@ class StudioIntegrationPlugin extends GenericPlugin
             ],
             'submission' => ['externalId' => (string)$submissionId],
             'actor' => ['externalId' => (string)$user->getId()],
-            'scope' => [
-                'metadata.read',
-                'contributors.read',
-                'files.read',
-                'manuscript.read',
-                'manuscript.write',
-                'revision.write',
-            ],
+            'actorMode' => $mode,
+            'scope' => $scope,
             'iat' => $now,
             'exp' => $now + $ttl,
             'nonce' => bin2hex(random_bytes(16)),
@@ -300,9 +321,6 @@ class StudioIntegrationPlugin extends GenericPlugin
             return null;
         }
 
-        // Reviewer launch deliberately carries no OJS metadata or contributor
-        // assertion. The reviewer authenticates in Studio and Studio applies
-        // its own reviewer-assignment authorization before exposing content.
         return $studioUrl . '/?review=1';
     }
 
@@ -315,17 +333,28 @@ class StudioIntegrationPlugin extends GenericPlugin
         return 'ojs-' . substr(hash('sha256', strtolower(rtrim($request->getBaseUrl(), '/'))), 0, 16);
     }
 
+    private function isEditorialUser($user, $context): bool
+    {
+        return $user->hasRole([
+            Role::ROLE_ID_MANAGER,
+            Role::ROLE_ID_SUB_EDITOR,
+            Role::ROLE_ID_ASSISTANT,
+        ], $context->getId()) ||
+            $user->hasRole([Role::ROLE_ID_SITE_ADMIN], Application::SITE_CONTEXT_ID);
+    }
+
     private function userCanAccessSubmission($user, $context, int $submissionId): bool
     {
         $submission = Repo::submission()->get($submissionId, $context->getId());
         if (!$submission) {
             return false;
         }
-        if ($user->hasRole([Role::ROLE_ID_MANAGER], $context->getId()) ||
-            $user->hasRole([Role::ROLE_ID_SITE_ADMIN], Application::SITE_CONTEXT_ID)) {
+        if ($this->isEditorialUser($user, $context)) {
             return true;
         }
-        $assignments = StageAssignment::withSubmissionIds([$submissionId])->withUserId($user->getId())->get();
+        $assignments = StageAssignment::withSubmissionIds([$submissionId])
+            ->withUserId($user->getId())
+            ->get();
         return $assignments->isNotEmpty();
     }
 
