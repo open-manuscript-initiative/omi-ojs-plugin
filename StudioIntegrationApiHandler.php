@@ -61,14 +61,10 @@ class StudioIntegrationApiHandler extends Handler
             ]);
         }
 
-        // Browser launches use a tiny HTML handoff instead of PKP's redirect
-        // pipeline. This avoids Request::redirect hooks/router fallbacks from
-        // rewriting an external Studio URL back to the journal index page.
         if ((string)$request->getUserVar('redirect') === '1') {
             $this->sendBrowserHandoff($launchUrl);
         }
 
-        // Keep a JSON form for diagnostics and non-browser integrations.
         return new JSONMessage(
             true,
             [
@@ -102,8 +98,6 @@ class StudioIntegrationApiHandler extends Handler
             exit;
         }
 
-        $htmlUrl = htmlspecialchars($launchUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-
         header('Content-Type: text/html; charset=utf-8');
         header('Cache-Control: no-store, max-age=0');
         header('Pragma: no-cache');
@@ -114,8 +108,11 @@ class StudioIntegrationApiHandler extends Handler
             . '<meta name="viewport" content="width=device-width,initial-scale=1">'
             . '<title>Opening Open Manuscript Studio</title></head>'
             . '<body><p>Opening Open Manuscript Studio…</p>'
-            . '<p><a id="omi-studio-handoff" href="' . $htmlUrl . '">Continue to Open Manuscript Studio</a></p>'
-            . '<script>window.location.replace(' . $scriptUrl . ');</script>'
+            . '<p><button id="omi-studio-handoff" type="button">Continue to Open Manuscript Studio</button></p>'
+            . '<script>(function(){var target=' . $scriptUrl . ';'
+            . 'var button=document.getElementById("omi-studio-handoff");'
+            . 'if(button){button.addEventListener("click",function(){window.location.assign(target);});}'
+            . 'window.location.replace(target);})();</script>'
             . '</body></html>';
         exit;
     }
