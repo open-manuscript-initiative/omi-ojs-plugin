@@ -59,9 +59,17 @@ class StudioIntegrationApiHandler extends Handler
             ]);
         }
 
-        return new JSONMessage(true, [
-            'launchUrl' => $launchUrl,
-            'mode' => $resolvedMode,
-        ]);
+        // PKP JSONMessage serializes the second constructor argument under
+        // `content`. The browser launcher needs a stable, unambiguous field,
+        // so expose launchUrl and mode as additional top-level attributes too.
+        return new JSONMessage(
+            true,
+            '',
+            '0',
+            [
+                'launchUrl' => $launchUrl,
+                'mode' => $resolvedMode,
+            ]
+        );
     }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.17 — 2026-08-12
+
+- Changed the authenticated Studio launch response to expose `launchUrl` and resolved launch `mode` as top-level PKP `JSONMessage` additional attributes.
+- Removed dependence on client-side inference of the nested `content` payload for successful launches.
+- Kept editor/reviewer role separation unchanged: editor launches retain `contributors.read`, reviewer launches remain anonymous.
+
 ## 1.1.16 — 2026-08-12
 
 - Fixed the OJS browser launcher to unwrap PKP `JSONMessage` responses and read `content.launchUrl` as well as a top-level `launchUrl`.
