@@ -66,11 +66,11 @@ class StudioIntegrationApiHandler extends Handler
             ]);
         }
 
-        // PKPRequest::redirectUrl() sends the Location header and terminates
-        // the request itself. It returns void and therefore must not be used
-        // as the expression of a return statement.
+        // Browser launches use a tiny HTML handoff instead of PKP's redirect
+        // pipeline. This avoids Request::redirect hooks/router fallbacks from
+        // rewriting an external Studio URL back to the journal index page.
         if ((string)$request->getUserVar('redirect') === '1') {
-            $request->redirectUrl($launchUrl);
+            $this->sendBrowserHandoff($launchUrl);
         }
 
         // Keep a JSON form for diagnostics and non-browser integrations.
@@ -86,5 +86,42 @@ class StudioIntegrationApiHandler extends Handler
                 'mode' => $resolvedMode,
             ]
         );
+    }
+
+    private function sendBrowserHandoff(string $launchUrl): void
+    {
+        $scriptUrl = json_encode(
+            $launchUrl,
+            JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE
+            | JSON_HEX_TAG
+            | JSON_HEX_AMP
+            | JSON_HEX_APOS
+            | JSON_HEX_QUOT
+        );
+
+        if ($scriptUrl === false) {
+            http_response_code(500);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo 'Unable to encode the Open Manuscript Studio launch URL.';
+            exit;
+        }
+
+        $htmlUrl = htmlspecialchars($launchUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store, max-age=0');
+        header('Pragma: no-cache');
+        header('Referrer-Policy: no-referrer');
+        header("Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+
+        echo '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            . '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            . '<title>Opening Open Manuscript Studio</title></head>'
+            . '<body><p>Opening Open Manuscript Studio…</p>'
+            . '<p><a id="omi-studio-handoff" href="' . $htmlUrl . '">Continue to Open Manuscript Studio</a></p>'
+            . '<script>window.location.replace(' . $scriptUrl . ');</script>'
+            . '</body></html>';
+        exit;
     }
 }
