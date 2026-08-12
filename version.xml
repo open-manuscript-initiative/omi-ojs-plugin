@@ -3,8 +3,8 @@
 <version>
     <application>studioIntegration</application>
     <type>plugins.generic</type>
-    <release>1.1.13.0</release>
-    <date>2026-08-09</date>
+    <release>1.1.15.0</release>
+    <date>2026-08-12</date>
     <lazy-load>1</lazy-load>
     <class>StudioIntegrationPlugin</class>
 </version>

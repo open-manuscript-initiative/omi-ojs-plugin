@@ -1,9 +1,9 @@
 msgid ""
 msgstr ""
-"Project-Id-Version: OMI OJS Integration Plugin 1.1.0\n"
+"Project-Id-Version: OMI OJS Integration Plugin 1.1.14\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-07 23:00+0200\n"
-"PO-Revision-Date: 2026-08-07 23:00+0200\n"
+"POT-Creation-Date: 2026-08-12 05:55+0200\n"
+"PO-Revision-Date: 2026-08-12 05:55+0200\n"
 "Last-Translator: Open Manuscript Initiative\n"
 "Language-Team: German\n"
 "Language: de\n"
@@ -19,6 +19,9 @@ msgstr "Verbindet OJS 3.5 mit Open Manuscript Studio über die OMI Integration A
 
 msgid "plugins.generic.studioIntegration.openInStudio"
 msgstr "In Studio öffnen"
+
+msgid "plugins.generic.studioIntegration.openInStudioForReview"
+msgstr "Im Studio zur Begutachtung öffnen"
 
 msgid "plugins.generic.studioIntegration.settings.title"
 msgstr "Open Manuscript Studio Integration"
