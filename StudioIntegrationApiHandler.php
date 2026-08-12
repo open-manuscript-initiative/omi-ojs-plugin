@@ -25,7 +25,7 @@ class StudioIntegrationApiHandler extends Handler
         );
     }
 
-    public function launch(array $args, $request): JSONMessage
+    public function launch(array $args, $request)
     {
         $submissionId = filter_var(
             $request->getUserVar('submissionId'),
@@ -44,9 +44,14 @@ class StudioIntegrationApiHandler extends Handler
 
         $requestedMode = (string)$request->getUserVar('mode');
         $resolvedMode = $this->plugin->resolveLaunchMode($request, $requestedMode);
-        $launchUrl = $resolvedMode === 'review'
-            ? $this->plugin->createReviewerLaunchUrl($request, $submissionId)
-            : $this->plugin->createLaunchUrl($request, $submissionId);
+
+        if ($resolvedMode === 'review') {
+            $launchUrl = $this->plugin->createReviewerLaunchUrl($request, $submissionId);
+        } elseif ($resolvedMode === 'author') {
+            $launchUrl = $this->plugin->createLaunchUrl($request, $submissionId, 'author');
+        } else {
+            $launchUrl = $this->plugin->createLaunchUrl($request, $submissionId, 'editor');
+        }
 
         if ($launchUrl === null) {
             return new JSONMessage(false, [
@@ -54,17 +59,27 @@ class StudioIntegrationApiHandler extends Handler
                     'code' => 'LAUNCH_FORBIDDEN',
                     'message' => $resolvedMode === 'review'
                         ? 'The current reviewer cannot open this submission in Open Manuscript Studio review mode.'
-                        : 'The current user cannot launch this submission in Open Manuscript Studio.',
+                        : ($resolvedMode === 'author'
+                            ? 'The current author cannot open this submission in Open Manuscript Studio.'
+                            : 'The current editor cannot launch this submission in Open Manuscript Studio.'),
                 ],
             ]);
         }
 
-        // PKP JSONMessage serializes the second constructor argument under
-        // `content`. The browser launcher needs a stable, unambiguous field,
-        // so expose launchUrl and mode as additional top-level attributes too.
+        // The browser launcher normally navigates directly to this endpoint.
+        // Let OJS perform the redirect itself instead of serializing a URL into
+        // JSON and asking client JavaScript to unwrap PKP JSONMessage formats.
+        if ((string)$request->getUserVar('redirect') === '1') {
+            return $request->redirectUrl($launchUrl);
+        }
+
+        // Keep a JSON form for diagnostics and non-browser integrations.
         return new JSONMessage(
             true,
-            '',
+            [
+                'launchUrl' => $launchUrl,
+                'mode' => $resolvedMode,
+            ],
             '0',
             [
                 'launchUrl' => $launchUrl,
