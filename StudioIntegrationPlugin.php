@@ -105,17 +105,19 @@ class StudioIntegrationPlugin extends GenericPlugin
             return false;
         }
 
-        if (!in_array($request->getRequestedPage(), ['workflow', 'dashboard'], true)) {
+        $requestedPage = $request->getRequestedPage();
+        if (!in_array($requestedPage, ['workflow', 'dashboard', 'reviewer'], true)) {
             return false;
         }
 
+        $reviewerMode = $requestedPage === 'reviewer';
         $contextId = $context->getId();
         $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
         if ($studioUrl === '') {
             return false;
         }
 
-        if ($this->ensureSharedSecret($contextId) === '') {
+        if (!$reviewerMode && $this->ensureSharedSecret($contextId) === '') {
             return false;
         }
 
@@ -129,7 +131,10 @@ class StudioIntegrationPlugin extends GenericPlugin
 
         $config = json_encode([
             'launchEndpoint' => $launchEndpoint,
-            'label' => __('plugins.generic.studioIntegration.openInStudio'),
+            'mode' => $reviewerMode ? 'review' : 'editor',
+            'label' => $reviewerMode
+                ? __('plugins.generic.studioIntegration.openInStudioForReview')
+                : __('plugins.generic.studioIntegration.openInStudio'),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
         if ($config === false) {
@@ -142,8 +147,8 @@ class StudioIntegrationPlugin extends GenericPlugin
             ['contexts' => ['backend']]
         );
         $templateMgr->addJavaScript(
-            'studioIntegration114',
-            $pluginBase . '/js/studioIntegration-1.1.4.js',
+            'studioIntegration115',
+            $pluginBase . '/js/studioIntegration-1.1.5.js',
             ['contexts' => ['backend']]
         );
         $templateMgr->addStyleSheet(
@@ -231,6 +236,42 @@ class StudioIntegrationPlugin extends GenericPlugin
             '&',
             PHP_QUERY_RFC3986
         );
+    }
+
+    public function createReviewerLaunchUrl($request, int $submissionId): ?string
+    {
+        $context = $request->getContext();
+        $user = $request->getUser();
+
+        if (!$context || !$user || $submissionId < 1) {
+            return null;
+        }
+
+        if (!$user->hasRole([Role::ROLE_ID_REVIEWER], $context->getId())) {
+            return null;
+        }
+
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission) {
+            return null;
+        }
+
+        $assignments = StageAssignment::withSubmissionIds([$submissionId])
+            ->withUserId($user->getId())
+            ->get();
+        if ($assignments->isEmpty()) {
+            return null;
+        }
+
+        $studioUrl = rtrim(trim((string)$this->getSetting($context->getId(), 'studioUrl')), '/');
+        if ($studioUrl === '') {
+            return null;
+        }
+
+        // Reviewer launch deliberately carries no OJS metadata or contributor
+        // assertion. The reviewer authenticates in Studio and Studio applies
+        // its own reviewer-assignment authorization before exposing content.
+        return $studioUrl . '/?review=1';
     }
 
     public function getInstallationId(int $contextId, $request): string
