@@ -66,11 +66,11 @@ class StudioIntegrationApiHandler extends Handler
             ]);
         }
 
-        // The browser launcher normally navigates directly to this endpoint.
-        // Let OJS perform the redirect itself instead of serializing a URL into
-        // JSON and asking client JavaScript to unwrap PKP JSONMessage formats.
+        // PKPRequest::redirectUrl() sends the Location header and terminates
+        // the request itself. It returns void and therefore must not be used
+        // as the expression of a return statement.
         if ((string)$request->getUserVar('redirect') === '1') {
-            return $request->redirectUrl($launchUrl);
+            $request->redirectUrl($launchUrl);
         }
 
         // Keep a JSON form for diagnostics and non-browser integrations.
