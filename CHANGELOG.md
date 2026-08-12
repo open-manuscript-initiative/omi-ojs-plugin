@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.14 — 2026-08-12
+
+- Added a dedicated Studio launcher to the OJS reviewer page.
+- Added reviewer-specific launch authorization: the current user must have the reviewer role and an assignment to the requested submission.
+- Reviewer launches open the Studio Peer Review workspace directly with `?review=1`.
+- Reviewer launches deliberately do not issue the normal OJS metadata/contributor launch assertion, preventing author-identifying contributor metadata from being exposed through this path.
+- Added English, Hungarian and German reviewer-launch labels.
+- Updated the browser launcher to recognize reviewer URLs and request `mode=review`.
+
 ## 1.1.3 — 2026-08-08
 
 - Changed the Studio launcher to request a fresh signed launch URL only when the user clicks the button.
