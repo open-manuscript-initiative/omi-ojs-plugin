@@ -13,7 +13,7 @@ use PKP\linkAction\request\AjaxModal;
 use PKP\plugins\GenericPlugin;
 use PKP\plugins\Hook;
 use PKP\security\Role;
-use PKP\stageAssignment\StageAssignment;
+use PKP\submission\reviewAssignment\ReviewAssignment;
 
 class StudioIntegrationPlugin extends GenericPlugin
 {
@@ -305,14 +305,7 @@ class StudioIntegrationPlugin extends GenericPlugin
         }
 
         $submission = Repo::submission()->get($submissionId, $context->getId());
-        if (!$submission) {
-            return null;
-        }
-
-        $assignments = StageAssignment::withSubmissionIds([$submissionId])
-            ->withUserId($user->getId())
-            ->get();
-        if ($assignments->isEmpty()) {
+        if (!$submission || !$this->reviewerCanAccessSubmission($user, $submissionId)) {
             return null;
         }
 
@@ -349,13 +342,62 @@ class StudioIntegrationPlugin extends GenericPlugin
         if (!$submission) {
             return false;
         }
+
         if ($this->isEditorialUser($user, $context)) {
             return true;
         }
-        $assignments = StageAssignment::withSubmissionIds([$submissionId])
-            ->withUserId($user->getId())
-            ->get();
-        return $assignments->isNotEmpty();
+
+        if (
+            $user->hasRole([Role::ROLE_ID_AUTHOR], $context->getId()) &&
+            $this->authorCanAccessSubmission($user, $context, $submission)
+        ) {
+            return true;
+        }
+
+        if (
+            $user->hasRole([Role::ROLE_ID_REVIEWER], $context->getId()) &&
+            $this->reviewerCanAccessSubmission($user, $submissionId)
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function authorCanAccessSubmission($user, $context, $submission): bool
+    {
+        $accessibleWorkflowStages = Repo::user()->getAccessibleWorkflowStages(
+            $user->getId(),
+            $context->getId(),
+            $submission
+        );
+
+        foreach ($accessibleWorkflowStages as $roles) {
+            if (in_array(Role::ROLE_ID_AUTHOR, $roles, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function reviewerCanAccessSubmission($user, int $submissionId): bool
+    {
+        $reviewAssignment = Repo::reviewAssignment()->getCollector()
+            ->filterBySubmissionIds([$submissionId])
+            ->filterByReviewerIds([$user->getId()], true)
+            ->getMany()
+            ->first();
+
+        if (!($reviewAssignment instanceof ReviewAssignment)) {
+            return false;
+        }
+
+        if ($reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) {
+            return false;
+        }
+
+        return true;
     }
 
     private function ensureSharedSecret(int $contextId): string
