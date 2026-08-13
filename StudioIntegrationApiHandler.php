@@ -62,7 +62,7 @@ class StudioIntegrationApiHandler extends Handler
         }
 
         if ((string)$request->getUserVar('redirect') === '1') {
-            $this->sendBrowserHandoff($launchUrl);
+            $this->sendDirectRedirect($launchUrl);
         }
 
         return new JSONMessage(
@@ -79,41 +79,15 @@ class StudioIntegrationApiHandler extends Handler
         );
     }
 
-    private function sendBrowserHandoff(string $launchUrl): void
+    private function sendDirectRedirect(string $launchUrl): void
     {
-        $scriptUrl = json_encode(
-            $launchUrl,
-            JSON_UNESCAPED_SLASHES
-            | JSON_UNESCAPED_UNICODE
-            | JSON_HEX_TAG
-            | JSON_HEX_AMP
-            | JSON_HEX_APOS
-            | JSON_HEX_QUOT
-        );
-
-        if ($scriptUrl === false) {
-            http_response_code(500);
-            header('Content-Type: text/plain; charset=utf-8');
-            echo 'Unable to encode the Open Manuscript Studio launch URL.';
-            exit;
-        }
-
-        header('Content-Type: text/html; charset=utf-8');
+        // Use a raw HTTP redirect rather than PKP's redirect pipeline or an
+        // intermediate HTML/JavaScript handoff. The Studio launch assertion is
+        // single-use, so the browser must receive exactly one navigation target.
         header('Cache-Control: no-store, max-age=0');
         header('Pragma: no-cache');
         header('Referrer-Policy: no-referrer');
-        header("Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
-
-        echo '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            . '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            . '<title>Opening Open Manuscript Studio</title></head>'
-            . '<body><p>Opening Open Manuscript Studio…</p>'
-            . '<p><button id="omi-studio-handoff" type="button">Continue to Open Manuscript Studio</button></p>'
-            . '<script>(function(){var target=' . $scriptUrl . ';'
-            . 'var button=document.getElementById("omi-studio-handoff");'
-            . 'if(button){button.addEventListener("click",function(){window.location.assign(target);});}'
-            . 'window.location.replace(target);})();</script>'
-            . '</body></html>';
+        header('Location: ' . $launchUrl, true, 303);
         exit;
     }
 }
