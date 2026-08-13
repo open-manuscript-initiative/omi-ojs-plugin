@@ -313,16 +313,91 @@ class StudioIntegrationPlugin extends GenericPlugin
         }
 
         $submission = Repo::submission()->get($submissionId, $context->getId());
-        if (!$submission || !$this->reviewerCanAccessSubmission($user, $submissionId)) {
+        if (!$submission) {
             return null;
         }
 
-        $studioUrl = rtrim(trim((string)$this->getSetting($context->getId(), 'studioUrl')), '/');
+        $reviewAssignment = Repo::reviewAssignment()->getCollector()
+            ->filterBySubmissionIds([$submissionId])
+            ->filterByReviewerIds([$user->getId()], true)
+            ->getMany()
+            ->first();
+
+        if (!($reviewAssignment instanceof ReviewAssignment)) {
+            return null;
+        }
+        if ($reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) {
+            return null;
+        }
+
+        $contextId = $context->getId();
+        $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
         if ($studioUrl === '') {
             return null;
         }
 
-        return $studioUrl . '/?review=1';
+        $secret = $this->ensureSharedSecret($contextId);
+        if ($secret === '') {
+            return null;
+        }
+
+        $ttl = (int)$this->getSetting($contextId, 'tokenTtl');
+        if ($ttl < 60 || $ttl > 3600) {
+            $ttl = 300;
+        }
+
+        $now = time();
+        $apiBaseUrl = $request->getDispatcher()->url(
+            $request,
+            Application::ROUTE_API,
+            $context->getPath(),
+            'omi-integration'
+        );
+
+        $claims = [
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/ojs',
+            'installationId' => $this->getInstallationId($contextId, $request),
+            'context' => [
+                'externalId' => (string)$contextId,
+                'type' => 'journal',
+                'path' => $context->getPath(),
+            ],
+            'submission' => ['externalId' => (string)$submissionId],
+            'reviewAssignment' => [
+                'externalId' => (string)$reviewAssignment->getId(),
+            ],
+            'actor' => ['externalId' => (string)$user->getId()],
+            'actorMode' => 'review',
+            'scope' => [
+                'metadata.read',
+                'files.read',
+                'manuscript.read',
+                'manuscript.write',
+                'revision.write',
+            ],
+            'iat' => $now,
+            'exp' => $now + $ttl,
+            'nonce' => bin2hex(random_bytes(16)),
+            'externalBaseUrl' => $request->getBaseUrl(),
+            'apiBaseUrl' => $apiBaseUrl,
+        ];
+
+        try {
+            $token = LaunchToken::issue($claims, $secret);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $studioUrl . '/?' . http_build_query(
+            array_merge([
+                'review' => '1',
+                'ojsReviewLaunch' => '1',
+            ], $token),
+            '',
+            '&',
+            PHP_QUERY_RFC3986
+        );
     }
 
     public function getInstallationId(int $contextId, $request): string
