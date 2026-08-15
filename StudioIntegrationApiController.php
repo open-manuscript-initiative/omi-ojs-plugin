@@ -10,6 +10,7 @@ use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
 use PKP\config\Config;
 use PKP\core\PKPBaseController;
+use PKP\security\Role;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class StudioIntegrationApiController extends PKPBaseController
@@ -33,6 +34,7 @@ class StudioIntegrationApiController extends PKPBaseController
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
         Route::get('contributors', $this->contributors(...))->name('api.omiIntegration.contributors');
+        Route::get('reviewers', $this->reviewers(...))->name('api.omiIntegration.reviewers');
         Route::get('files', $this->files(...))->name('api.omiIntegration.files');
         Route::get('files/{submissionFileId}/content', $this->fileContent(...))
             ->whereNumber('submissionFileId')
@@ -54,7 +56,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
-            'capabilities' => ['launch', 'metadata.read', 'contributors.read', 'files.read', 'files.content.read'],
+            'capabilities' => ['launch', 'metadata.read', 'contributors.read', 'reviewers.read', 'files.read', 'files.content.read'],
         ]);
     }
 
@@ -67,11 +69,26 @@ class StudioIntegrationApiController extends PKPBaseController
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
+
+        $actor = null;
+        $actorId = (int)($claims['actor']['externalId'] ?? 0);
+        if ($actorId > 0) {
+            $actorUser = Repo::user()->get($actorId);
+            if ($actorUser) {
+                $actor = [
+                    'externalId' => (string)$actorId,
+                    'email' => (string)$actorUser->getEmail(),
+                    'fullName' => (string)$actorUser->getFullName(),
+                ];
+            }
+        }
+
         return response()->json([
             'protocol' => 'omi-integration/1',
             'installationId' => $this->plugin->getInstallationId($context->getId(), Application::get()->getRequest()),
             'context' => $this->contextData($context),
             'submission' => $adapter->mapSubmission($submission),
+            'actor' => $actor,
         ]);
     }
 
@@ -88,6 +105,47 @@ class StudioIntegrationApiController extends PKPBaseController
             'protocol' => 'omi-integration/1',
             'submissionExternalId' => (string)$submissionId,
             'contributors' => $adapter->mapContributors($submission),
+        ]);
+    }
+
+    public function reviewers(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$claims, $submissionId, $context] = $authorized;
+
+        // Reviewer-pool identity is editorial metadata. Reuse the existing
+        // editor-only contributors.read launch scope so author/reviewer launch
+        // assertions can never enumerate the journal's reviewer pool.
+        if (!$this->hasScope($claims, 'contributors.read')) {
+            return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'contributors.read']);
+        }
+
+        $userGroupIds = Repo::userGroup()->getArrayIdByRoleId(Role::ROLE_ID_REVIEWER, $context->getId());
+        $reviewers = [];
+        if ($userGroupIds) {
+            $users = Repo::user()->getCollector()
+                ->filterByContextIds([$context->getId()])
+                ->filterByUserGroupIds($userGroupIds)
+                ->getMany();
+
+            foreach ($users as $user) {
+                $email = trim((string)$user->getEmail());
+                if ($email === '') continue;
+                $reviewers[] = [
+                    'externalId' => (string)$user->getId(),
+                    'email' => $email,
+                    'fullName' => (string)$user->getFullName(),
+                ];
+            }
+        }
+
+        usort($reviewers, static fn (array $a, array $b): int => strcasecmp($a['fullName'], $b['fullName']));
+
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'submissionExternalId' => (string)$submissionId,
+            'reviewers' => $reviewers,
         ]);
     }
 
