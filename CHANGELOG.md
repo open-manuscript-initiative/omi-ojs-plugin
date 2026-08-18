@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.28 — 2026-08-18
+
+- Added stable submission-file genre metadata to the OMI Integration API file listing.
+- Each file now exposes `genreKey`, `genreName`, and `genreCategory` in addition to the existing numeric `genreExternalId`.
+- This allows Studio to select source files in two dimensions: first the OJS submission-file stage (`stage = 2`), then the Article Text component (`genreKey = SUBMISSION`), without relying on localized labels or installation-specific numeric genre IDs.
+
 ## 1.1.17 — 2026-08-12
 
 - Changed the authenticated Studio launch response to expose `launchUrl` and resolved launch `mode` as top-level PKP `JSONMessage` additional attributes.

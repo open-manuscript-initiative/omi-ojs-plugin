@@ -4,6 +4,7 @@ namespace APP\plugins\generic\studioIntegration\classes\Adapters;
 use APP\core\Application;
 use APP\facades\Repo;
 use PKP\controlledVocab\ControlledVocab;
+use PKP\db\DAORegistry;
 
 final class Ojs35Adapter
 {
@@ -74,10 +75,6 @@ final class Ojs35Adapter
                     'status' => $submission->getData('status'),
                     'publicationId' => $publication ? (int)$publication->getId() : null,
                 ],
-                // These fields can be provided by Open Science / custom OJS
-                // metadata plugins. They are deliberately kept outside the
-                // portable OMI core because they are not part of the OJS 3.5
-                // Publication REST schema supplied by PKP.
                 'org.pkp.ojs.openScience' => $publication
                     ? $this->mapOpenScienceExtension($publication)
                     : [],
@@ -126,15 +123,26 @@ final class Ojs35Adapter
         $files = Repo::submissionFile()->getCollector()
             ->filterBySubmissionIds([$submission->getId()])
             ->getMany();
+
+        /** @var \PKP\submission\GenreDAO $genreDao */
+        $genreDao = DAORegistry::getDAO('GenreDAO');
+        $contextId = (int)$submission->getData('contextId');
+
         $result = [];
         foreach ($files as $file) {
+            $genreId = (int)($file->getData('genreId') ?? 0);
+            $genre = $genreId > 0 ? $genreDao->getById($genreId, $contextId) : null;
+
             $result[] = [
                 'externalId' => (string)$file->getId(),
                 'name' => (string)($file->getData('originalFileName') ?? $file->getData('name', $submission->getData('locale')) ?? ''),
                 'mediaType' => (string)($file->getData('mimetype') ?? ''),
                 'size' => $file->getData('fileSize'),
                 'stage' => (int)$file->getData('fileStage'),
-                'genreExternalId' => $file->getData('genreId') !== null ? (string)$file->getData('genreId') : null,
+                'genreExternalId' => $genreId > 0 ? (string)$genreId : null,
+                'genreKey' => $genre ? $this->nullableString($genre->getKey()) : null,
+                'genreName' => $genre ? $this->nullableString($genre->getLocalizedName()) : null,
+                'genreCategory' => $genre ? (int)$genre->getCategory() : null,
                 'revision' => $file->getData('revision'),
                 'createdAt' => $this->formatDate($file->getData('createdAt')),
                 'updatedAt' => $this->formatDate($file->getData('updatedAt')),
