@@ -110,10 +110,6 @@ class StudioIntegrationPlugin extends GenericPlugin
             return false;
         }
 
-        // Resolve the role before rendering the launcher. The page name alone
-        // must never force an editorial user into reviewer mode. Editorial
-        // roles have priority in resolveLaunchMode(), including when the same
-        // OJS account also has author or reviewer roles.
         $launchMode = $this->resolveLaunchMode(
             $request,
             $requestedPage === 'reviewer' ? 'review' : 'auto'
@@ -251,18 +247,26 @@ class StudioIntegrationPlugin extends GenericPlugin
         $scope = $mode === 'editor'
             ? [
                 'metadata.read',
+                'metadata.write',
                 'contributors.read',
+                'contributors.write',
                 'files.read',
+                'files.write',
                 'manuscript.read',
                 'manuscript.write',
+                'revision.read',
                 'revision.write',
+                'review.assignment.read',
+                'review.assignment.write',
+                'review.identity.read',
+                'review.response.read',
             ]
             : [
                 'metadata.read',
                 'files.read',
                 'manuscript.read',
-                'manuscript.write',
-                'revision.write',
+                'author.manuscript.write',
+                'author.revision.write',
             ];
 
         $claims = [
@@ -370,11 +374,11 @@ class StudioIntegrationPlugin extends GenericPlugin
             'actor' => ['externalId' => (string)$user->getId()],
             'actorMode' => 'review',
             'scope' => [
-                'metadata.read',
-                'files.read',
-                'manuscript.read',
-                'manuscript.write',
-                'revision.write',
+                'review.metadata.read',
+                'review.files.read',
+                'review.manuscript.read',
+                'review.revision.write',
+                'review.response.write',
             ],
             'iat' => $now,
             'exp' => $now + $ttl,
