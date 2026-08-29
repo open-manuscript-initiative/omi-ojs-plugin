@@ -69,8 +69,14 @@ class StudioIntegrationApiController extends PKPBaseController
                 'reviewers.read',
                 'files.read',
                 'files.content.read',
-                'review.files.scoped',
+                'author.manuscript.write',
+                'author.revision.write',
+                'review.metadata.read',
+                'review.files.read',
+                'review.manuscript.read',
+                'review.revision.write',
                 'review.response.write',
+                'review.files.scoped',
             ],
         ]);
     }
@@ -80,7 +86,9 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-        if (!$this->hasScope($claims, 'metadata.read')) return $this->error('insufficient_scope', 'The signed assertion does not grant the required scope.', 403, ['required' => 'metadata.read']);
+        if (!$this->hasAnyScope($claims, ['metadata.read', 'review.metadata.read'])) {
+            return $this->error('insufficient_scope', 'The signed assertion does not grant submission metadata access.', 403);
+        }
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
@@ -112,7 +120,7 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-        if (!$this->hasScope($claims, 'contributors.read')) return $this->error('insufficient_scope', 'The signed assertion does not grant the required scope.', 403, ['required' => 'contributors.read']);
+        if (!$this->hasScope($claims, 'contributors.read')) return $this->error('insufficient_scope', 'The signed assertion does not grant contributor identity access.', 403, ['required' => 'contributors.read']);
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
@@ -128,8 +136,8 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-        if (!$this->hasScope($claims, 'contributors.read')) {
-            return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'contributors.read']);
+        if (!$this->hasAnyScope($claims, ['review.identity.read', 'contributors.read'])) {
+            return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'review.identity.read']);
         }
 
         $userGroupIds = Repo::userGroup()->getArrayIdByRoleId(Role::ROLE_ID_REVIEWER, $context->getId());
@@ -162,13 +170,16 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-        if (!$this->hasScope($claims, 'files.read')) return $this->error('insufficient_scope', 'The signed assertion does not grant the required scope.', 403, ['required' => 'files.read']);
+        if (!$this->hasAnyScope($claims, ['files.read', 'review.files.read'])) {
+            return $this->error('insufficient_scope', 'The signed assertion does not grant file access.', 403);
+        }
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
 
         $files = $adapter->mapFiles($submission);
         if (($claims['actorMode'] ?? '') === 'review') {
+            if (!$this->hasScope($claims, 'review.files.read')) return $this->error('insufficient_scope', 'Reviewer file access requires review.files.read.', 403);
             $reviewAssignment = $this->reviewAssignmentForClaims($claims, $submissionId);
             if (!$reviewAssignment) return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and submission.', 403);
             $files = array_values(array_filter(
@@ -186,7 +197,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'protocol' => 'omi-integration/1',
             'submissionExternalId' => (string)$submissionId,
             'files' => $files,
-            'binaryTransfer' => ['available' => true, 'authorization' => 'OMI launch assertion', 'scope' => 'files.read'],
+            'binaryTransfer' => ['available' => true, 'authorization' => 'OMI launch assertion'],
         ]);
     }
 
@@ -200,9 +211,10 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId] = $authorized;
-        if (!$this->hasScope($claims, 'files.read')) return $this->error('insufficient_scope', 'The signed assertion does not grant the required scope.', 403, ['required' => 'files.read']);
+        if (!$this->hasAnyScope($claims, ['files.read', 'review.files.read'])) return $this->error('insufficient_scope', 'The signed assertion does not grant file access.', 403);
 
         if (($claims['actorMode'] ?? '') === 'review') {
+            if (!$this->hasScope($claims, 'review.files.read')) return $this->error('insufficient_scope', 'Reviewer file access requires review.files.read.', 403);
             $reviewAssignment = $this->reviewAssignmentForClaims($claims, $submissionId);
             if (!$reviewAssignment || !$this->reviewFileAllowed($reviewAssignment, $submissionFileId)) {
                 return $this->error('file_not_available_for_review', 'This file is not available to the current review assignment.', 403);
@@ -269,6 +281,8 @@ class StudioIntegrationApiController extends PKPBaseController
 
     private function reviewAssignmentForClaims(array $claims, int $submissionId): ?ReviewAssignment
     {
+        if (($claims['actorMode'] ?? '') !== 'review') return null;
+        if (!$this->hasScope($claims, 'review.manuscript.read')) return null;
         $assignmentId = (int)($claims['reviewAssignment']['externalId'] ?? 0);
         $actorId = (int)($claims['actor']['externalId'] ?? 0);
         if ($assignmentId < 1 || $actorId < 1) return null;
@@ -327,6 +341,14 @@ class StudioIntegrationApiController extends PKPBaseController
     {
         $scopes = is_array($claims['scope'] ?? null) ? $claims['scope'] : [];
         return in_array($scope, $scopes, true);
+    }
+
+    private function hasAnyScope(array $claims, array $scopes): bool
+    {
+        foreach ($scopes as $scope) {
+            if ($this->hasScope($claims, $scope)) return true;
+        }
+        return false;
     }
 
     private function contextData(object $context): array
