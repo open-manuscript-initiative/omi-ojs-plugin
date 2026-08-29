@@ -10,11 +10,16 @@ use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
 use PKP\config\Config;
 use PKP\core\PKPBaseController;
+use PKP\db\DAORegistry;
 use PKP\security\Role;
+use PKP\submission\ReviewFilesDAO;
+use PKP\submission\reviewAssignment\ReviewAssignment;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class StudioIntegrationApiController extends PKPBaseController
 {
+    private const SERVICE_CLOCK_SKEW_SECONDS = 300;
+
     public function __construct(private StudioIntegrationPlugin $plugin)
     {
     }
@@ -39,6 +44,7 @@ class StudioIntegrationApiController extends PKPBaseController
         Route::get('files/{submissionFileId}/content', $this->fileContent(...))
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
+        Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
     }
 
     public function capabilities(IlluminateRequest $illuminateRequest): JsonResponse
@@ -52,11 +58,20 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.1.8',
+                'version' => '1.2.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
-            'capabilities' => ['launch', 'metadata.read', 'contributors.read', 'reviewers.read', 'files.read', 'files.content.read'],
+            'capabilities' => [
+                'launch',
+                'metadata.read',
+                'contributors.read',
+                'reviewers.read',
+                'files.read',
+                'files.content.read',
+                'review.files.scoped',
+                'review.response.write',
+            ],
         ]);
     }
 
@@ -113,10 +128,6 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-
-        // Reviewer-pool identity is editorial metadata. Reuse the existing
-        // editor-only contributors.read launch scope so author/reviewer launch
-        // assertions can never enumerate the journal's reviewer pool.
         if (!$this->hasScope($claims, 'contributors.read')) {
             return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'contributors.read']);
         }
@@ -128,7 +139,6 @@ class StudioIntegrationApiController extends PKPBaseController
                 ->filterByContextIds([$context->getId()])
                 ->filterByUserGroupIds($userGroupIds)
                 ->getMany();
-
             foreach ($users as $user) {
                 $email = trim((string)$user->getEmail());
                 if ($email === '') continue;
@@ -139,9 +149,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 ];
             }
         }
-
         usort($reviewers, static fn (array $a, array $b): int => strcasecmp($a['fullName'], $b['fullName']));
-
         return response()->json([
             'protocol' => 'omi-integration/1',
             'submissionExternalId' => (string)$submissionId,
@@ -158,10 +166,22 @@ class StudioIntegrationApiController extends PKPBaseController
         $adapter = new Ojs35Adapter();
         $submission = $adapter->getSubmission($submissionId, $context->getId());
         if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
+
+        $files = $adapter->mapFiles($submission);
+        if (($claims['actorMode'] ?? '') === 'review') {
+            $reviewAssignment = $this->reviewAssignmentForClaims($claims, $submissionId);
+            if (!$reviewAssignment) return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and submission.', 403);
+            $files = array_values(array_filter(
+                $files,
+                fn (array $file): bool => $this->reviewFileAllowed($reviewAssignment, (int)($file['externalId'] ?? 0))
+            ));
+        }
+
         $files = array_map(function (array $file): array {
             $file['contentPath'] = 'files/' . rawurlencode((string)$file['externalId']) . '/content';
             return $file;
-        }, $adapter->mapFiles($submission));
+        }, $files);
+
         return response()->json([
             'protocol' => 'omi-integration/1',
             'submissionExternalId' => (string)$submissionId,
@@ -173,9 +193,7 @@ class StudioIntegrationApiController extends PKPBaseController
     public function fileContent(IlluminateRequest $illuminateRequest): BinaryFileResponse|JsonResponse
     {
         $routeFileId = $illuminateRequest->route('submissionFileId');
-        if (!is_scalar($routeFileId) || !ctype_digit((string)$routeFileId)) {
-            return $this->error('invalid_file_id', 'Invalid submission file ID.', 400);
-        }
+        if (!is_scalar($routeFileId) || !ctype_digit((string)$routeFileId)) return $this->error('invalid_file_id', 'Invalid submission file ID.', 400);
         $submissionFileId = (int)$routeFileId;
         if ($submissionFileId < 1) return $this->error('invalid_file_id', 'Invalid submission file ID.', 400);
 
@@ -183,6 +201,13 @@ class StudioIntegrationApiController extends PKPBaseController
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId] = $authorized;
         if (!$this->hasScope($claims, 'files.read')) return $this->error('insufficient_scope', 'The signed assertion does not grant the required scope.', 403, ['required' => 'files.read']);
+
+        if (($claims['actorMode'] ?? '') === 'review') {
+            $reviewAssignment = $this->reviewAssignmentForClaims($claims, $submissionId);
+            if (!$reviewAssignment || !$this->reviewFileAllowed($reviewAssignment, $submissionFileId)) {
+                return $this->error('file_not_available_for_review', 'This file is not available to the current review assignment.', 403);
+            }
+        }
 
         $submissionFile = Repo::submissionFile()->get($submissionFileId, $submissionId);
         if (!$submissionFile || (int)$submissionFile->getData('submissionId') !== $submissionId) return $this->error('file_not_found', 'Submission file not found.', 404);
@@ -201,6 +226,85 @@ class StudioIntegrationApiController extends PKPBaseController
             'Cache-Control' => 'no-store, private',
             'X-Content-Type-Options' => 'nosniff',
         ]);
+    }
+
+    public function reviewResult(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $context = Application::get()->getRequest()->getContext();
+        if (!$context) return $this->error('context_required', 'A journal context is required.', 400);
+        $serviceError = $this->authorizeServiceRequest($illuminateRequest, $context->getId());
+        if ($serviceError) return $serviceError;
+
+        $submissionId = (int)$illuminateRequest->input('submissionExternalId', 0);
+        $reviewAssignmentId = (int)$illuminateRequest->input('reviewAssignmentExternalId', 0);
+        if ($submissionId < 1 || $reviewAssignmentId < 1) return $this->error('invalid_review_result', 'A valid submission and review assignment are required.', 400);
+
+        $reviewAssignment = Repo::reviewAssignment()->get($reviewAssignmentId, $submissionId);
+        if (!($reviewAssignment instanceof ReviewAssignment) || $reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) {
+            return $this->error('review_assignment_not_found', 'Review assignment not found or no longer writable.', 404);
+        }
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission) return $this->error('submission_not_found', 'Submission not found in this journal.', 404);
+
+        $authorComment = trim((string)$illuminateRequest->input('authorAndEditorComment', ''));
+        $editorComment = trim((string)$illuminateRequest->input('editorOnlyComment', ''));
+        $recommendation = trim((string)$illuminateRequest->input('recommendation', ''));
+        if ($authorComment === '' && $editorComment === '' && $recommendation === '') {
+            return $this->error('empty_review_result', 'The review result does not contain any writable content.', 400);
+        }
+
+        if ($authorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $authorComment, true);
+        if ($recommendation !== '') {
+            $editorComment = trim(($editorComment !== '' ? $editorComment . "\n\n" : '') . '[OMI recommendation: ' . $recommendation . ']');
+        }
+        if ($editorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $editorComment, false);
+
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'submissionExternalId' => (string)$submissionId,
+            'reviewAssignmentExternalId' => (string)$reviewAssignmentId,
+            'written' => true,
+        ]);
+    }
+
+    private function reviewAssignmentForClaims(array $claims, int $submissionId): ?ReviewAssignment
+    {
+        $assignmentId = (int)($claims['reviewAssignment']['externalId'] ?? 0);
+        $actorId = (int)($claims['actor']['externalId'] ?? 0);
+        if ($assignmentId < 1 || $actorId < 1) return null;
+        $assignment = Repo::reviewAssignment()->get($assignmentId, $submissionId);
+        if (!($assignment instanceof ReviewAssignment)) return null;
+        if ((int)$assignment->getSubmissionId() !== $submissionId || (int)$assignment->getReviewerId() !== $actorId) return null;
+        if ($assignment->getCancelled() || $assignment->getDeclined()) return null;
+        return $assignment;
+    }
+
+    private function reviewFileAllowed(ReviewAssignment $reviewAssignment, int $submissionFileId): bool
+    {
+        if ($submissionFileId < 1) return false;
+        /** @var ReviewFilesDAO $reviewFilesDao */
+        $reviewFilesDao = DAORegistry::getDAO('ReviewFilesDAO');
+        return (bool)$reviewFilesDao->check($reviewAssignment->getId(), $submissionFileId);
+    }
+
+    private function authorizeServiceRequest(IlluminateRequest $request, int $contextId): ?JsonResponse
+    {
+        $installation = trim((string)$request->header('X-OMI-Installation', ''));
+        $timestamp = trim((string)$request->header('X-OMI-Timestamp', ''));
+        $signature = trim((string)$request->header('X-OMI-Signature', ''));
+        if ($installation === '' || !ctype_digit($timestamp) || $signature === '') return $this->error('service_authentication_required', 'Signed OMI service authentication is required.', 401);
+        if (abs(time() - (int)$timestamp) > self::SERVICE_CLOCK_SKEW_SECONDS) return $this->error('service_assertion_expired', 'The OMI service assertion is outside the allowed clock window.', 401);
+
+        $expectedInstallation = $this->plugin->getInstallationId($contextId, Application::get()->getRequest());
+        if (!hash_equals($expectedInstallation, $installation)) return $this->error('invalid_installation', 'The OMI installation identifier does not match this journal.', 401);
+        $secret = (string)$this->plugin->getSetting($contextId, 'sharedSecret');
+        if ($secret === '') return $this->error('integration_not_configured', 'The integration shared secret is not configured.', 503);
+
+        $body = (string)$request->getContent();
+        $canonical = $timestamp . "\n" . strtoupper($request->getMethod()) . "\n" . $request->getPathInfo() . "\n" . hash('sha256', $body);
+        $expected = rtrim(strtr(base64_encode(hash_hmac('sha256', $canonical, $secret, true)), '+/', '-_'), '=');
+        if (!hash_equals($expected, $signature)) return $this->error('invalid_service_signature', 'The OMI service signature is invalid.', 401);
+        return null;
     }
 
     private function authorizeSubmissionRequest(IlluminateRequest $illuminateRequest): array|JsonResponse
