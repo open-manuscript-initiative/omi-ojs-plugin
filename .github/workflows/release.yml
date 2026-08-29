@@ -128,15 +128,16 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists."
           else
-            git tag -a "$TAG" "$GITHUB_SHA" -m "OMI OJS Integration Plugin ${TAG}"
-            git push origin "$TAG"
+            # A lightweight tag avoids requiring a configured Git author identity
+            # on the ephemeral GitHub-hosted runner.
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/${TAG}"
           fi
 
       - name: Publish GitHub Release
