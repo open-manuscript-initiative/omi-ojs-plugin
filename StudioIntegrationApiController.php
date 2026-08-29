@@ -236,21 +236,18 @@ class StudioIntegrationApiController extends PKPBaseController
         $result = $elementDao->getByReviewFormId($formId);
         while ($element = $result->next()) {
             $possible = $element->getLocalizedPossibleResponses();
-            $options = [];
-            if (is_array($possible)) {
-                foreach ($possible as $value => $label) {
-                    $options[] = ['value' => (string)$value, 'label' => (string)$label];
-                }
-            }
+            $options = $this->reviewFormOptions($possible);
+            $localizations = $this->reviewFormLocalizations($element);
             $elementId = (int)$element->getId();
             $elements[] = [
                 'externalId' => (string)$elementId,
                 'type' => $this->reviewFormElementType((int)$element->getElementType()),
-                'question' => (string)$element->getLocalizedQuestion(),
-                'description' => (string)$element->getLocalizedDescription(),
+                'question' => $this->reviewFormPlainText($element->getLocalizedQuestion()),
+                'description' => $this->reviewFormPlainText($element->getLocalizedDescription()),
                 'required' => (bool)$element->getRequired(),
                 'authorVisible' => (bool)$element->getIncluded(),
                 'options' => $options,
+                'localizations' => $localizations,
                 'value' => array_key_exists($elementId, $responseValues) ? $responseValues[$elementId] : null,
             ];
         }
@@ -434,6 +431,56 @@ class StudioIntegrationApiController extends PKPBaseController
             ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_DROP_DOWN_BOX => 'dropdown',
             default => 'unsupported',
         };
+    }
+
+    private function reviewFormLocalizations(ReviewFormElement $element): array
+    {
+        $questions = $element->getData('question');
+        $descriptions = $element->getData('description');
+        $possibleResponses = $element->getData('possibleResponses');
+
+        $locales = array_values(array_unique(array_merge(
+            is_array($questions) ? array_keys($questions) : [],
+            is_array($descriptions) ? array_keys($descriptions) : [],
+            is_array($possibleResponses) ? array_keys($possibleResponses) : []
+        )));
+
+        $localizations = [];
+        foreach ($locales as $locale) {
+            $question = is_array($questions) ? ($questions[$locale] ?? '') : '';
+            $description = is_array($descriptions) ? ($descriptions[$locale] ?? '') : '';
+            $possible = is_array($possibleResponses) ? ($possibleResponses[$locale] ?? []) : [];
+            $localizations[(string)$locale] = [
+                'question' => $this->reviewFormPlainText($question),
+                'description' => $this->reviewFormPlainText($description),
+                'options' => $this->reviewFormOptions($possible),
+            ];
+        }
+        return $localizations;
+    }
+
+    private function reviewFormOptions(mixed $possible): array
+    {
+        if (!is_array($possible)) return [];
+        $options = [];
+        foreach ($possible as $value => $label) {
+            $options[] = [
+                'value' => (string)$value,
+                'label' => $this->reviewFormPlainText($label),
+            ];
+        }
+        return $options;
+    }
+
+    private function reviewFormPlainText(mixed $value): string
+    {
+        if (!is_scalar($value)) return '';
+        $text = html_entity_decode((string)$value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = preg_replace('/<\s*br\s*\/?\s*>/i', ' ', $text) ?? $text;
+        $text = preg_replace('/<\s*\/p\s*>/i', ' ', $text) ?? $text;
+        $text = strip_tags($text);
+        $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+        return trim($text);
     }
 
     private function reviewAssignmentForClaims(array $claims, int $submissionId): ?ReviewAssignment
