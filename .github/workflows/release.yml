@@ -1,0 +1,183 @@
+name: OJS Plugin Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without v prefix, for example 1.2.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ojs-plugin-release-${{ github.ref }}-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish OJS plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate release version
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${DISPATCH_VERSION}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          OJS_VERSION="$(php -r '$xml = simplexml_load_file("version.xml"); if ($xml === false) exit(2); echo trim((string)$xml->release);')"
+          EXPECTED_OJS_VERSION="${VERSION}.0"
+
+          if [[ "$OJS_VERSION" != "$EXPECTED_OJS_VERSION" ]]; then
+            echo "version.xml release is $OJS_VERSION but tag $TAG requires $EXPECTED_OJS_VERSION" >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ojs_version=$OJS_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Lint PHP sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            php -l "$file"
+          done < <(find . -type f -name '*.php' -not -path './vendor/*' -print0)
+
+      - name: Verify package structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            index.php
+            version.xml
+            StudioIntegrationPlugin.php
+            StudioIntegrationApiHandler.php
+            StudioIntegrationApiController.php
+          )
+          for file in "${required[@]}"; do
+            test -s "$file" || { echo "Missing or empty required file: $file" >&2; exit 1; }
+          done
+
+      - name: Build installable archives
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          PACKAGE="studioIntegration-ojs-3.5-${TAG}"
+          rm -rf dist
+          mkdir -p dist/studioIntegration
+
+          rsync -a ./ dist/studioIntegration/ \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='dist/' \
+            --exclude='*.log' \
+            --exclude='*.sqlite' \
+            --exclude='*.sqlite3'
+
+          (
+            cd dist
+            zip -q -r "${PACKAGE}.zip" studioIntegration
+            tar -czf "${PACKAGE}.tar.gz" studioIntegration
+            sha256sum "${PACKAGE}.zip" "${PACKAGE}.tar.gz" > SHA256SUMS.txt
+          )
+
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect archives
+        shell: bash
+        env:
+          PACKAGE: ${{ steps.package.outputs.package }}
+        run: |
+          set -euo pipefail
+          unzip -l "dist/${PACKAGE}.zip" | grep -F 'studioIntegration/version.xml'
+          tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F 'studioIntegration/version.xml'
+          test -s dist/SHA256SUMS.txt
+
+      - name: Create Git tag for manual release
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists."
+          else
+            git tag -a "$TAG" "$GITHUB_SHA" -m "OMI OJS Integration Plugin ${TAG}"
+            git push origin "$TAG"
+          fi
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE: ${{ steps.package.outputs.package }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; uploading/replacing assets."
+            gh release upload "$TAG" \
+              "dist/${PACKAGE}.zip" \
+              "dist/${PACKAGE}.tar.gz" \
+              dist/SHA256SUMS.txt \
+              --clobber
+          else
+            gh release create "$TAG" \
+              "dist/${PACKAGE}.zip" \
+              "dist/${PACKAGE}.tar.gz" \
+              dist/SHA256SUMS.txt \
+              --title "OMI OJS Integration Plugin ${TAG}" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+      - name: Release summary
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PACKAGE: ${{ steps.package.outputs.package }}
+        run: |
+          {
+            echo "## OJS Plugin Release"
+            echo
+            echo "- Tag: \`${TAG}\`"
+            echo "- ZIP: \`${PACKAGE}.zip\`"
+            echo "- TAR.GZ: \`${PACKAGE}.tar.gz\`"
+            echo "- Checksums: \`SHA256SUMS.txt\`"
+            echo "- OJS package root: \`studioIntegration/\`"
+          } >> "$GITHUB_STEP_SUMMARY"
