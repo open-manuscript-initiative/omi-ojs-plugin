@@ -379,6 +379,8 @@ class StudioIntegrationPlugin extends GenericPlugin
                 'review.manuscript.read',
                 'review.revision.write',
                 'review.response.write',
+                'review.form.read',
+                'review.form.write',
             ],
             'iat' => $now,
             'exp' => $now + $ttl,
