@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.0 — 2026-08-29
+
+- Added bidirectional OJS ↔ Open Manuscript Studio peer-review synchronization.
+- Added least-privilege launch scopes for authors, reviewers and editors.
+- Restricted reviewer file access to the concrete OJS `ReviewAssignment` and native `review_files` grants.
+- Enforced the reviewer file grant again on binary file downloads.
+- Added timestamped HMAC-authenticated Studio → OJS review-result writeback.
+- Kept author-visible and editor-only reviewer comments separate through PKP's native review-comment storage.
+- Added native OJS review-form integration for reviewer assignments.
+- Added support for all six PKP review-form element types: small text, text, textarea, checkboxes, radio buttons and dropdowns.
+- Added `review.form.read` and `review.form.write` reviewer scopes.
+- Preserved OJS review-form required-field rules and author visibility (`included`) when the form is rendered in Studio.
+- Validated review-form responses again on the OJS side before saving them with PKP's native `saveReviewFormResponse()` API.
+- Added CI validation for PHP 8.2, 8.3 and 8.4 and package-integrity checks.
+- Added pull-request dependency review for newly introduced vulnerable dependencies.
+
 ## 1.1.28 — 2026-08-18
 
 - Added stable submission-file genre metadata to the OMI Integration API file listing.
