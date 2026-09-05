@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+## 1.2.1 — 2026-09-05
+
 ### Fixed
 
 - Restored PKP 3.5-compatible review comments and form-response persistence without calling non-existent repository convenience methods.
+- Verified the complete double-anonymous reviewer workflow, required review form, corrections, separated comments and Studio-to-OJS writeback against a disposable native OJS 3.5 environment.
 
 ## 1.2.0 — 2026-08-29
 
