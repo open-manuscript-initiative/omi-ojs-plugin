@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Restored PKP 3.5-compatible review comments and form-response persistence without calling non-existent repository convenience methods.
+
 ## 1.2.0 — 2026-08-29
 
 - Added bidirectional OJS ↔ Open Manuscript Studio peer-review synchronization.
@@ -12,7 +18,7 @@
 - Added support for all six PKP review-form element types: small text, text, textarea, checkboxes, radio buttons and dropdowns.
 - Added `review.form.read` and `review.form.write` reviewer scopes.
 - Preserved OJS review-form required-field rules and author visibility (`included`) when the form is rendered in Studio.
-- Validated review-form responses again on the OJS side before saving them with PKP's native `saveReviewFormResponse()` API.
+- Validated review-form responses again on the OJS side before saving them through PKP's native review-form response DAO.
 - Added CI validation for PHP 8.2, 8.3 and 8.4 and package-integrity checks.
 - Added pull-request dependency review for newly introduced vulnerable dependencies.
 
