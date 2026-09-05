@@ -9,11 +9,14 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
 use PKP\config\Config;
+use PKP\core\Core;
 use PKP\core\PKPBaseController;
 use PKP\db\DAORegistry;
 use PKP\reviewForm\ReviewFormElement;
+use PKP\reviewForm\ReviewFormResponse;
 use PKP\security\Role;
 use PKP\submission\ReviewFilesDAO;
+use PKP\submission\SubmissionComment;
 use PKP\submission\reviewAssignment\ReviewAssignment;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -334,13 +337,13 @@ class StudioIntegrationApiController extends PKPBaseController
         }
 
         foreach ($validatedFormResponses as $elementId => $value) {
-            Repo::reviewAssignment()->saveReviewFormResponse($reviewAssignment, $elementId, $value);
+            $this->saveReviewFormResponse($reviewAssignment, $elementId, $value);
         }
-        if ($authorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $authorComment, true);
+        if ($authorComment !== '') $this->saveReviewComment($reviewAssignment, $authorComment, true);
         if ($recommendation !== '') {
             $editorComment = trim(($editorComment !== '' ? $editorComment . "\n\n" : '') . '[OMI recommendation: ' . $recommendation . ']');
         }
-        if ($editorComment !== '') Repo::reviewAssignment()->saveReviewComment($reviewAssignment, $editorComment, false);
+        if ($editorComment !== '') $this->saveReviewComment($reviewAssignment, $editorComment, false);
 
         return response()->json([
             'protocol' => 'omi-integration/1',
@@ -503,6 +506,62 @@ class StudioIntegrationApiController extends PKPBaseController
         /** @var ReviewFilesDAO $reviewFilesDao */
         $reviewFilesDao = DAORegistry::getDAO('ReviewFilesDAO');
         return (bool)$reviewFilesDao->check($reviewAssignment->getId(), $submissionFileId);
+    }
+
+    private function saveReviewFormResponse(ReviewAssignment $assignment, int $elementId, mixed $value): void
+    {
+        /** @var \PKP\reviewForm\ReviewFormElementDAO $elementDao */
+        $elementDao = DAORegistry::getDAO('ReviewFormElementDAO');
+        /** @var \PKP\reviewForm\ReviewFormResponseDAO $responseDao */
+        $responseDao = DAORegistry::getDAO('ReviewFormResponseDAO');
+        $element = $elementDao->getById($elementId, (int)$assignment->getReviewFormId());
+        if (!($element instanceof ReviewFormElement)) return;
+
+        $response = $responseDao->getReviewFormResponse((int)$assignment->getId(), $elementId)
+            ?? new ReviewFormResponse();
+        $responseType = match ((int)$element->getElementType()) {
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_CHECKBOXES => 'object',
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_RADIO_BUTTONS,
+            ReviewFormElement::REVIEW_FORM_ELEMENT_TYPE_DROP_DOWN_BOX => 'int',
+            default => 'string',
+        };
+        $response->setResponseType($responseType);
+        $response->setValue($value);
+        if ($response->getReviewId() !== null && $response->getReviewFormElementId() !== null) {
+            $responseDao->updateObject($response);
+            return;
+        }
+        $response->setReviewId((int)$assignment->getId());
+        $response->setReviewFormElementId($elementId);
+        $responseDao->insertObject($response);
+    }
+
+    private function saveReviewComment(ReviewAssignment $assignment, string $text, bool $viewable): void
+    {
+        /** @var \PKP\submission\SubmissionCommentDAO $commentDao */
+        $commentDao = DAORegistry::getDAO('SubmissionCommentDAO');
+        $comments = $commentDao->getReviewerCommentsByReviewerId(
+            (int)$assignment->getSubmissionId(),
+            (int)$assignment->getReviewerId(),
+            (int)$assignment->getId(),
+            $viewable
+        );
+        $comment = $comments->next() ?? $commentDao->newDataObject();
+        $comment->setCommentType(SubmissionComment::COMMENT_TYPE_PEER_REVIEW);
+        $comment->setRoleId(Role::ROLE_ID_REVIEWER);
+        $comment->setSubmissionId((int)$assignment->getSubmissionId());
+        $comment->setAssocId((int)$assignment->getId());
+        $comment->setAuthorId((int)$assignment->getReviewerId());
+        $comment->setCommentTitle('');
+        $comment->setComments($text);
+        $comment->setViewable($viewable);
+        if ($comment->getId() !== null) {
+            $comment->setDateModified(Core::getCurrentDate());
+            $commentDao->updateObject($comment);
+            return;
+        }
+        $comment->setDatePosted(Core::getCurrentDate());
+        $commentDao->insertObject($comment);
     }
 
     private function authorizeServiceRequest(IlluminateRequest $request, int $contextId): ?JsonResponse
