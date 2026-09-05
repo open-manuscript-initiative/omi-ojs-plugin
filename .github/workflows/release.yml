@@ -2,8 +2,10 @@ name: OJS Plugin Release
 
 on:
   push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+    branches:
+      - main
+    paths:
+      - version.xml
   workflow_dispatch:
     inputs:
       version:
@@ -40,7 +42,8 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             VERSION="${DISPATCH_VERSION}"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            OJS_RELEASE="$(php -r '$xml = simplexml_load_file("version.xml"); if ($xml === false) exit(2); echo trim((string)$xml->release);')"
+            VERSION="${OJS_RELEASE%.0}"
           fi
 
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -124,8 +127,7 @@ jobs:
           tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F 'studioIntegration/version.xml'
           test -s dist/SHA256SUMS.txt
 
-      - name: Create Git tag for manual release
-        if: github.event_name == 'workflow_dispatch'
+      - name: Create Git tag for release
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
