@@ -41,6 +41,7 @@ class StudioIntegrationApiController extends PKPBaseController
     public function getGroupRoutes(): void
     {
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
+        Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
         Route::get('contributors', $this->contributors(...))->name('api.omiIntegration.contributors');
         Route::get('reviewers', $this->reviewers(...))->name('api.omiIntegration.reviewers');
@@ -50,6 +51,38 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
         Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
+    }
+
+    /** Public submission requirements; creation remains protected by native PKP author authorization. */
+    public function submissionOptions(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $context = Application::get()->getRequest()->getContext();
+        if (!$context || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('context_required', 'An enabled publishing context is required.', 404);
+        }
+        $sections = [];
+        foreach (Repo::section()->getCollector()->filterByContextIds([$context->getId()])->getMany() as $section) {
+            if ($section->getIsInactive() || $section->getEditorRestricted()) continue;
+            $sections[] = ['id' => (int)$section->getId(), 'label' => $section->getLocalizedTitle()];
+        }
+        $genres = [];
+        $genreDao = DAORegistry::getDAO('GenreDAO');
+        $enabledGenres = $genreDao->getEnabledByContextId($context->getId());
+        while ($genre = $enabledGenres->next()) {
+            $genres[] = ['id' => (int)$genre->getId(), 'label' => $genre->getLocalizedName()];
+        }
+        return response()->json([
+            'protocol' => 'omi-direct-submission/1',
+            'platform' => 'ojs',
+            'name' => $context->getLocalizedData('name'),
+            'acceptingSubmissions' => !(bool)$context->getData('disableSubmissions'),
+            'locales' => array_values($context->getSupportedSubmissionLocales()),
+            'sections' => $sections,
+            'genres' => $genres,
+            'requirements' => $context->getLocalizedData('submissionChecklist'),
+            'copyrightNotice' => $context->getLocalizedData('copyrightNotice'),
+            'privacyStatement' => $context->getLocalizedData('privacyStatement'),
+        ]);
     }
 
     public function capabilities(IlluminateRequest $illuminateRequest): JsonResponse
@@ -63,7 +96,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.2.0',
+                'version' => '1.3.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),

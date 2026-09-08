@@ -180,3 +180,27 @@ Changes to the OJS connector should preserve the following constraints:
 ## License
 
 GNU General Public License v3.0. See [`LICENSE`](LICENSE).
+
+
+## Direct submissions from Studio (1.3.0)
+
+`GET /api/v1/omi-integration/submission-options` exposes the current context's
+public supported submission languages, active unrestricted sections/series,
+enabled file components, acceptance state and author-facing terms. It is available
+only when the integration plugin is enabled in the context.
+
+Updated Studio clients use these options to prepare DOCX and OMI files and create
+new submissions through the **native PKP 3.5 author API**. The author must supply
+their own destination API key. The plugin shared secret is not an author
+credential. This endpoint does not create submissions, grant roles or bypass
+native validation. The author's explicit final confirmation invokes native
+submission completion, including its standard editorial workflow.
+
+Deploy the corresponding Studio direct-submission update and database migration
+alongside this plugin. For OMP, an individual study becomes a new authored-work
+submission, not a chapter added to an existing volume.
+
+See [Studio's direct submission guide](https://github.com/open-manuscript-initiative/open-manuscript-studio/blob/main/docs/direct-publishing-submissions.md)
+for configuration, recovery and validation instructions. Real PKP 3.5 author-flow
+verification is required before production rollout; no production submissions
+were created while developing this endpoint.

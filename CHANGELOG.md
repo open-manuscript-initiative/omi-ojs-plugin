@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0.0 — 2026-09-08
+
+- Expose public submission options for Studio's native OJS/OMP author submission flow.
+- Include accepted languages, unrestricted active sections/series, file components and author terms.
+- Require an enabled plugin/context; leave creation, file upload and completion to native PKP permissions.
+- Document deployment dependencies and the required real-platform verification.
+
+
 ## Unreleased
 
 ## 1.2.1 — 2026-09-05
