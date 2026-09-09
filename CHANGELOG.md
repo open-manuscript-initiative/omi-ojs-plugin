@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1.0 — 2026-09-09
+
+### Fixed
+
+- Moved the fixed “Open in Studio” launcher to the top-left of the viewport so it no longer overlaps OJS workflow actions such as Save.
+- Added mobile safe-area offsets and viewport-constrained width for consistent placement on desktop and mobile screens.
+- No launch, authorization, submission-selection, or permission logic changed in this patch.
+
 ## 1.3.0.0 — 2026-09-08
 
 - Expose public submission options for Studio's native OJS/OMP author submission flow.
