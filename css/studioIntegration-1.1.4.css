@@ -1,7 +1,9 @@
 .omi-studio-launcher--v114 {
   position: fixed !important;
-  right: 1.5rem !important;
-  bottom: 1.5rem !important;
+  top: max(0.75rem, env(safe-area-inset-top)) !important;
+  left: max(0.75rem, env(safe-area-inset-left)) !important;
+  right: auto !important;
+  bottom: auto !important;
   z-index: 2147483647 !important;
   pointer-events: auto !important;
   touch-action: manipulation !important;
@@ -9,7 +11,7 @@
   align-items: center !important;
   justify-content: center !important;
   min-height: 2.5rem !important;
-  max-width: min(32rem, calc(100vw - 3rem)) !important;
+  max-width: min(32rem, calc(100vw - 1.5rem)) !important;
   padding: 0.65rem 1rem !important;
   border: 0 !important;
   border-radius: 0.25rem !important;
