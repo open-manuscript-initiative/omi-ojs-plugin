@@ -1,13 +1,15 @@
 .omi-studio-launcher {
   position: fixed;
-  right: 1.5rem;
-  bottom: 1.5rem;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: max(0.75rem, env(safe-area-inset-left));
+  right: auto;
+  bottom: auto;
   z-index: 10000;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 2.5rem;
-  max-width: min(32rem, calc(100vw - 3rem));
+  max-width: min(32rem, calc(100vw - 1.5rem));
   padding: 0.65rem 1rem;
   border: 0;
   border-radius: 0.25rem;
