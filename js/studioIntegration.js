@@ -1,7 +1,17 @@
 (function () {
   'use strict';
 
+  var VERSION = '1.3.2';
+  var GLOBAL_KEY = '__OMI_STUDIO_LAUNCHER__';
+  var LAUNCHER_ID = 'omi-studio-launcher';
+
+  if (window[GLOBAL_KEY] && typeof window[GLOBAL_KEY].mount === 'function') {
+    window[GLOBAL_KEY].mount();
+    return;
+  }
+
   var lastSubmissionId = null;
+  var mountScheduled = false;
 
   function getConfig() {
     return window.OMI_STUDIO_INTEGRATION || null;
@@ -13,137 +23,93 @@
 
     for (var i = 0; i < queryKeys.length; i += 1) {
       var queryValue = url.searchParams.get(queryKeys[i]);
-      if (/^[1-9][0-9]*$/.test(queryValue || '')) {
-        return queryValue;
-      }
+      if (/^[1-9][0-9]*$/.test(queryValue || '')) return queryValue;
     }
 
     var segments = url.pathname.split('/').filter(Boolean);
-    var markers = ['workflow', 'submission'];
+    var markers = ['workflow', 'submission', 'reviewer'];
 
     for (var m = 0; m < markers.length; m += 1) {
       var markerIndex = segments.indexOf(markers[m]);
-      if (markerIndex !== -1) {
-        for (var j = markerIndex + 1; j < segments.length; j += 1) {
-          if (/^[1-9][0-9]*$/.test(segments[j])) {
-            return segments[j];
-          }
-        }
+      if (markerIndex === -1) continue;
+
+      for (var j = markerIndex + 1; j < segments.length; j += 1) {
+        if (/^[1-9][0-9]*$/.test(segments[j])) return segments[j];
       }
     }
 
     return null;
   }
 
-  function removeLauncher() {
-    var existing = document.getElementById('omi-studio-launcher');
-    if (existing) {
-      existing.remove();
-    }
+  function getLauncher() {
+    return document.getElementById(LAUNCHER_ID);
   }
 
-  function setState(link, state, message) {
-    link.classList.remove(
-      'omi-studio-launcher--loading',
-      'omi-studio-launcher--error'
+  function isCurrentLauncher(element) {
+    return Boolean(
+      element &&
+      element.dataset &&
+      element.dataset.omiStudioLauncherVersion === VERSION
     );
-
-    if (state === 'loading') {
-      link.classList.add('omi-studio-launcher--loading');
-      link.setAttribute('aria-busy', 'true');
-      link.textContent = message || 'Opening Studio…';
-      return;
-    }
-
-    link.removeAttribute('aria-busy');
-
-    if (state === 'error') {
-      link.classList.add('omi-studio-launcher--error');
-      link.textContent = message || 'Studio launch failed';
-      return;
-    }
-
-    link.textContent = message;
   }
 
-  async function fetchLaunchUrl(config, submissionId) {
+  function removeLauncher() {
+    var existing = getLauncher();
+    if (existing) existing.remove();
+  }
+
+  function createDirectLaunchUrl(config, submissionId) {
     var endpoint = new URL(config.launchEndpoint, window.location.origin);
     endpoint.searchParams.set('submissionId', submissionId);
 
-    var response = await fetch(endpoint.toString(), {
-      method: 'GET',
-      credentials: 'same-origin',
-      headers: {
-        'Accept': 'application/json'
-      },
-      cache: 'no-store'
-    });
-
-    var data = null;
-    try {
-      data = await response.json();
-    } catch (_error) {
-      data = null;
+    if (config.mode && config.mode !== 'auto') {
+      endpoint.searchParams.set('mode', config.mode);
     }
 
-    if (!response.ok) {
-      var detail = data && data.error && data.error.message
-        ? data.error.message
-        : 'HTTP ' + response.status;
-      throw new Error(detail);
-    }
-
-    if (!data || !data.launchUrl) {
-      throw new Error('The OJS integration did not return a Studio launch URL.');
-    }
-
-    return data.launchUrl;
+    endpoint.searchParams.set('redirect', '1');
+    endpoint.searchParams.set('_omi', Date.now().toString());
+    return endpoint.toString();
   }
 
   function createLauncher(config, submissionId) {
-    var link = document.createElement('button');
-    var label = config.label || 'Open in Studio';
+    var button = document.createElement('button');
+    var label = config.label || (
+      config.mode === 'review' ? 'Open in Studio for Review' : 'Open in Studio'
+    );
 
-    link.id = 'omi-studio-launcher';
-    link.className = 'omi-studio-launcher';
-    link.type = 'button';
-    link.textContent = label;
-    link.setAttribute('aria-label', label);
+    button.id = LAUNCHER_ID;
+    button.className = 'omi-studio-launcher';
+    button.type = 'button';
+    button.textContent = label;
+    button.setAttribute('aria-label', label);
+    button.dataset.omiStudioLauncherVersion = VERSION;
+    button.dataset.omiSubmissionId = submissionId;
 
-    link.addEventListener('click', async function () {
-      if (link.disabled) {
-        return;
-      }
+    button.addEventListener('pointerdown', function (event) {
+      event.stopPropagation();
+    }, true);
 
-      link.disabled = true;
-      setState(link, 'loading', 'Opening Studio…');
+    button.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.disabled) return;
 
-      try {
-        var launchUrl = await fetchLaunchUrl(config, submissionId);
-        window.location.assign(launchUrl);
-      } catch (error) {
-        var message = error instanceof Error ? error.message : 'Studio launch failed.';
-        console.error('OMI Studio launch failed:', error);
-        setState(link, 'error', message);
-        link.title = message;
-        link.disabled = false;
+      button.disabled = true;
+      button.classList.add('omi-studio-launcher--loading');
+      button.setAttribute('aria-busy', 'true');
+      button.textContent = 'Opening Studio…';
+      window.location.assign(createDirectLaunchUrl(config, submissionId));
+    }, true);
 
-        window.setTimeout(function () {
-          if (document.body.contains(link)) {
-            setState(link, 'ready', label);
-          }
-        }, 5000);
-      }
-    });
-
-    document.body.appendChild(link);
+    document.body.appendChild(button);
+    return button;
   }
 
   function mount() {
+    mountScheduled = false;
+
     var config = getConfig();
-    if (!config || !config.launchEndpoint) {
-      return;
-    }
+    if (!config || !config.launchEndpoint) return;
 
     var submissionId = getSubmissionId();
     if (!submissionId) {
@@ -152,24 +118,33 @@
       return;
     }
 
-    if (
-      submissionId === lastSubmissionId &&
-      document.getElementById('omi-studio-launcher')
-    ) {
+    var existing = getLauncher();
+    var existingMatches = isCurrentLauncher(existing) &&
+      existing.dataset.omiSubmissionId === submissionId;
+
+    if (existingMatches) {
+      lastSubmissionId = submissionId;
       return;
     }
 
-    lastSubmissionId = submissionId;
     removeLauncher();
     createLauncher(config, submissionId);
+    lastSubmissionId = submissionId;
   }
 
   function scheduleMount() {
+    if (mountScheduled) return;
+    mountScheduled = true;
     window.setTimeout(mount, 0);
   }
 
+  window[GLOBAL_KEY] = {
+    version: VERSION,
+    mount: scheduleMount
+  };
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mount);
+    document.addEventListener('DOMContentLoaded', mount, {once: true});
   } else {
     mount();
   }
@@ -191,7 +166,14 @@
   };
 
   var observer = new MutationObserver(function () {
-    if (getSubmissionId() !== lastSubmissionId) {
+    var submissionId = getSubmissionId();
+    var launcher = getLauncher();
+
+    if (
+      submissionId !== lastSubmissionId ||
+      (submissionId && !isCurrentLauncher(launcher)) ||
+      (submissionId && launcher && launcher.dataset.omiSubmissionId !== submissionId)
+    ) {
       scheduleMount();
     }
   });
