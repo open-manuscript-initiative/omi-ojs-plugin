@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0.0 — 2026-09-13
+
+- Add editor-authenticated HTML galley inspection and transfer for existing unpublished OJS 3.5 production submissions.
+- Reuse one galley per Studio manuscript and language; identical retries do not create another proof file. Changed HTML retains prior proof files for editorial history.
+- Require native editorial API authorization and production-stage access, recheck the target publication under a database lock, and leave publication/approval to OJS editors.
+- Accept self-contained HTML with inline styles and embedded raster images, with an 8 MiB limit and no scripts or external resources.
+
 ## 1.3.2.0 — 2026-09-09
 
 ### Fixed

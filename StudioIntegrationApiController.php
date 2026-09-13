@@ -5,6 +5,11 @@ use APP\core\Application;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Ojs35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
+use APP\plugins\generic\studioIntegration\classes\Core\HtmlGalleyDocument;
+use APP\submission\Submission;
+use Illuminate\Support\Facades\DB;
+use PKP\plugins\PluginRegistry;
+use PKP\submissionFile\SubmissionFile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
@@ -51,6 +56,130 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
         Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
+        Route::post('html-galley', $this->htmlGalley(...))
+            ->middleware(['has.user', self::roleAuthorizer([
+                Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN,
+                Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT,
+            ])])->name('api.omiIntegration.htmlGalley');
+    }
+
+    /** Native OJS API-token authorization; the shared integration secret is not an editor credential. */
+    public function htmlGalley(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate([
+            'action' => 'required|in:inspect,transfer',
+            'submissionId' => 'required|integer|min:1',
+            'manuscriptId' => 'required|string|max:128',
+            'publicationId' => 'required_if:action,transfer|integer|min:1',
+            'locale' => 'required_if:action,transfer|string|max:32',
+            'genreId' => 'required_if:action,transfer|integer|min:1',
+            'html' => 'required_if:action,transfer|string|max:8388608',
+            'confirmed' => 'required_if:action,transfer|accepted',
+        ]);
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('editor_required', 'An authenticated editor in an enabled context is required.', 403);
+        }
+        $submissionId = (int)$data['submissionId'];
+        $authorize = function () use ($context, $user, $submissionId, $data) {
+            $submission = Repo::submission()->get($submissionId);
+            if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()) {
+                abort(404, 'Submission not found.');
+            }
+            $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+            if (!array_intersect($stages[WORKFLOW_STAGE_ID_PRODUCTION] ?? [], [
+                Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT,
+            ])) abort(403, 'Editorial access to this submission in production is required.');
+            $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+            if ((int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION || !$publication
+                || (int)$publication->getData('status') !== Submission::STATUS_QUEUED
+                || (isset($data['publicationId']) && (int)$data['publicationId'] !== (int)$publication->getId())) {
+                abort(409, 'Inspect the current unpublished production version before transferring HTML.');
+            }
+            return [$submission, $publication];
+        };
+        [$submission, $publication] = $authorize();
+        $reader = PluginRegistry::getPlugin('generic', 'htmlarticlegalleyplugin');
+        if (!$reader || !$reader->getEnabled($context->getId())) {
+            return $this->error('html_reader_required', 'Enable the OJS HTML Article Galley plugin first.', 409);
+        }
+        $genres = [];
+        $enabled = DAORegistry::getDAO('GenreDAO')->getEnabledByContextId($context->getId());
+        while ($genre = $enabled->next()) {
+            if (!$genre->getDependent() && !$genre->getSupplementary()) {
+                $genres[] = ['id' => (int)$genre->getId(), 'label' => $genre->getLocalizedName()];
+            }
+        }
+        $locales = array_values($context->getSupportedSubmissionLocales());
+        if ($data['action'] === 'inspect') {
+            return response()->json([
+                'protocol' => 'omi-html-galley/1', 'submissionId' => $submissionId,
+                'publicationId' => (int)$publication->getId(), 'title' => $publication->getLocalizedData('title'),
+                'locales' => $locales, 'genres' => $genres,
+            ]);
+        }
+        if (!in_array($data['locale'], $locales, true) || !in_array((int)$data['genreId'], array_column($genres, 'id'), true)) {
+            return $this->error('invalid_options', 'Choose an enabled publication language and article file genre.', 422);
+        }
+        try { HtmlGalleyDocument::validate($data['html']); }
+        catch (\InvalidArgumentException $e) { return $this->error('invalid_html', $e->getMessage(), 422); }
+        $digest = hash('sha256', $data['html']);
+        $fileName = 'omi-html-' . $digest . '.html';
+        $path = HtmlGalleyDocument::path($data['manuscriptId'], $data['locale']);
+        $temporary = tmpfile();
+        if (!$temporary) return $this->error('storage_error', 'Unable to allocate temporary storage.', 500);
+        $fileId = null;
+        $used = false;
+        try {
+            // Defense in depth, placed before the document's own metadata and stylesheet.
+            $html = preg_replace('/<head(?:\s[^>]*)?>/i', '<head><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; img-src data:; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">', $data['html'], 1);
+            if (fwrite($temporary, $html) !== strlen($html)) throw new \RuntimeException('Unable to write HTML.');
+            $dir = Repo::submissionFile()->getSubmissionDir($context->getId(), $submissionId);
+            // Keep the physical file record outside the transaction so rollback cleanup can find it.
+            $fileId = app()->get('file')->add(stream_get_meta_data($temporary)['uri'], $dir . '/' . bin2hex(random_bytes(16)) . '.html');
+            $receipt = DB::transaction(function () use ($authorize, $submissionId, $data, $path, $fileName, $fileId, $context, $user, &$used) {
+                DB::table('submissions')->where('submission_id', $submissionId)->lockForUpdate()->first();
+                DB::table('publications')->where('publication_id', (int)$data['publicationId'])->lockForUpdate()->first();
+                [$submission, $publication] = $authorize();
+                $galley = Repo::galley()->getByUrlPath($path, $publication);
+                $existingFile = $galley && $galley->getData('submissionFileId')
+                    ? Repo::submissionFile()->get((int)$galley->getData('submissionFileId'), $submissionId) : null;
+                if ($existingFile && $existingFile->getData('name', $data['locale']) === $fileName) {
+                    return ['galleyId' => (int)$galley->getId(), 'submissionFileId' => (int)$existingFile->getId(), 'unchanged' => true];
+                }
+                if (!$galley) {
+                    $galleyId = Repo::galley()->add(Repo::galley()->newDataObject([
+                        'publicationId' => (int)$publication->getId(), 'submissionFileId' => null,
+                        'label' => 'HTML', 'locale' => $data['locale'], 'urlPath' => $path, 'isApproved' => false,
+                    ]));
+                    $galley = Repo::galley()->get($galleyId);
+                }
+                $params = [
+                    'fileId' => $fileId, 'submissionId' => $submissionId, 'uploaderUserId' => (int)$user->getId(),
+                    'fileStage' => SubmissionFile::SUBMISSION_FILE_PROOF, 'genreId' => (int)$data['genreId'],
+                    'assocType' => Application::ASSOC_TYPE_REPRESENTATION, 'assocId' => (int)$galley->getId(),
+                    'name' => [$data['locale'] => $fileName, $submission->getData('locale') => $fileName],
+                ];
+                $errors = Repo::submissionFile()->validate(null, $params, $context->getSupportedSubmissionMetadataLocales(), $submission->getData('locale'));
+                if ($errors) abort(422, 'The HTML proof file failed OJS validation.');
+                $submissionFileId = Repo::submissionFile()->add(Repo::submissionFile()->newDataObject($params));
+                Repo::galley()->edit($galley, ['submissionFileId' => $submissionFileId, 'isApproved' => false]);
+                $used = true;
+                return ['galleyId' => (int)$galley->getId(), 'submissionFileId' => $submissionFileId, 'unchanged' => false];
+            });
+            return response()->json(array_merge($receipt, [
+                'protocol' => 'omi-html-galley/1', 'submissionId' => $submissionId,
+                'publicationId' => (int)$data['publicationId'], 'sha256' => $digest, 'published' => false,
+            ]));
+        } catch (\Throwable $e) {
+            $used = false;
+            throw $e;
+        } finally {
+            fclose($temporary);
+            if ($fileId !== null && !$used) app()->get('file')->delete($fileId);
+        }
     }
 
     /** Public submission requirements; creation remains protected by native PKP author authorization. */
@@ -96,7 +225,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.3.0',
+                'version' => '1.4.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -118,6 +247,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'review.form.write',
                 'review.forms.native',
                 'review.files.scoped',
+                'editor.html-galley.write',
             ],
         ]);
     }
