@@ -37,6 +37,12 @@ jobs:
       - name: Show PHP version
         run: php --version
 
+      - name: Check HTML galley document safety
+        run: php tests/html-galley-document.php
+
+      - name: Check editorial transfer contract
+        run: php tests/html-galley-transfer.php
+
       - name: Lint PHP sources
         shell: bash
         run: |
