@@ -54,6 +54,7 @@ The integration is designed so that:
 - assignment-scoped reviewer metadata and manuscript access;
 - reviewer source files restricted through PKP/OJS review-file authorization;
 - native OJS review-form retrieval;
+- assignment-scoped OJS reviewer recommendation options with localized labels;
 - localized review-form questions, descriptions and options;
 - native review-form response persistence;
 - author-visible and editor-only review comments kept separate;
@@ -109,7 +110,7 @@ The plugin exposes integration endpoints inside the current journal context thro
 - contributors;
 - reviewer candidates;
 - submission files and protected file content;
-- review forms;
+- review forms and assignment-scoped reviewer recommendation options;
 - review-result writeback.
 
 Clients must not assume that possession of a submission ID grants access. Every protected request is checked against the signed launch assertion and the current OJS context.
