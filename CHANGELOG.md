@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1.0 — 2026-09-15
+
+- Add assignment-scoped OJS reviewer recommendation options to the OMI Integration API.
+- Return localized OJS labels and the current assignment selection without deriving recommendation IDs in Studio.
+- Persist native PKP recommendation IDs on newer OJS versions and the OJS 3.5 assignment-bound recommendation codes on supported legacy installations.
+- Validate signed Studio writeback against the concrete review assignment and offered options; preserve the legacy recommendation field for older Studio clients.
+
 ## 1.4.0.0 — 2026-09-13
 
 - Add editor-authenticated HTML galley inspection and transfer for existing unpublished OJS 3.5 production submissions.
