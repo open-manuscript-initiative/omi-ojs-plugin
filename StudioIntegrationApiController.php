@@ -52,6 +52,7 @@ class StudioIntegrationApiController extends PKPBaseController
         Route::get('reviewers', $this->reviewers(...))->name('api.omiIntegration.reviewers');
         Route::get('files', $this->files(...))->name('api.omiIntegration.files');
         Route::get('review-form', $this->reviewForm(...))->name('api.omiIntegration.reviewForm');
+        Route::get('review-recommendations', $this->reviewRecommendations(...))->name('api.omiIntegration.reviewRecommendations');
         Route::get('files/{submissionFileId}/content', $this->fileContent(...))
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
@@ -225,7 +226,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.4.0',
+                'version' => '1.4.1',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -248,6 +249,8 @@ class StudioIntegrationApiController extends PKPBaseController
                 'review.forms.native',
                 'review.files.scoped',
                 'editor.html-galley.write',
+                'review.recommendations',
+                ...$this->reviewerRecommendationCapabilities($context),
             ],
         ]);
     }
@@ -372,6 +375,29 @@ class StudioIntegrationApiController extends PKPBaseController
         ]);
     }
 
+    public function reviewRecommendations(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$claims, $submissionId, $context] = $authorized;
+        if (($claims['actorMode'] ?? '') !== 'review' || !$this->hasScope($claims, 'review.form.read')) {
+            return $this->error('insufficient_scope', 'Reviewer recommendation access requires review.form.read.', 403, ['required' => 'review.form.read']);
+        }
+
+        $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
+        if (!$assignment) return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and submission.', 403);
+
+        $catalog = $this->reviewerRecommendationCatalog($context, $assignment);
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'submissionExternalId' => (string)$submissionId,
+            'reviewAssignmentExternalId' => (string)$assignment->getId(),
+            'recommendationStorage' => $catalog['storage'],
+            'options' => $catalog['options'],
+            'selectedExternalId' => $catalog['selectedExternalId'],
+        ]);
+    }
+
     public function reviewForm(IlluminateRequest $illuminateRequest): JsonResponse
     {
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
@@ -489,13 +515,24 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorComment = trim((string)$illuminateRequest->input('authorAndEditorComment', ''));
         $editorComment = trim((string)$illuminateRequest->input('editorOnlyComment', ''));
         $recommendation = trim((string)$illuminateRequest->input('recommendation', ''));
+        $rawExternalRecommendationId = $illuminateRequest->input('reviewerRecommendationExternalId');
+        if ($rawExternalRecommendationId !== null && !is_scalar($rawExternalRecommendationId)) {
+            return $this->error('invalid_reviewer_recommendation', 'The reviewer recommendation identifier must be a scalar value.', 400);
+        }
+        $externalRecommendationId = trim((string)($rawExternalRecommendationId ?? ''));
         $formResponses = $illuminateRequest->input('reviewFormResponses', []);
         if (!is_array($formResponses)) return $this->error('invalid_review_form_responses', 'Review form responses must be an array.', 400);
 
         $validatedFormResponses = $this->validateReviewFormResponses($reviewAssignment, $formResponses);
         if ($validatedFormResponses instanceof JsonResponse) return $validatedFormResponses;
 
-        if ($authorComment === '' && $editorComment === '' && $recommendation === '' && $validatedFormResponses === []) {
+        $recommendationWriteback = null;
+        if ($externalRecommendationId !== '') {
+            $recommendationWriteback = $this->persistReviewerRecommendation($context, $reviewAssignment, $externalRecommendationId);
+            if ($recommendationWriteback instanceof JsonResponse) return $recommendationWriteback;
+        }
+
+        if ($authorComment === '' && $editorComment === '' && $recommendation === '' && $recommendationWriteback === null && $validatedFormResponses === []) {
             return $this->error('empty_review_result', 'The review result does not contain any writable content.', 400);
         }
 
@@ -503,7 +540,7 @@ class StudioIntegrationApiController extends PKPBaseController
             $this->saveReviewFormResponse($reviewAssignment, $elementId, $value);
         }
         if ($authorComment !== '') $this->saveReviewComment($reviewAssignment, $authorComment, true);
-        if ($recommendation !== '') {
+        if ($recommendation !== '' && $recommendationWriteback === null) {
             $editorComment = trim(($editorComment !== '' ? $editorComment . "\n\n" : '') . '[OMI recommendation: ' . $recommendation . ']');
         }
         if ($editorComment !== '') $this->saveReviewComment($reviewAssignment, $editorComment, false);
@@ -513,8 +550,109 @@ class StudioIntegrationApiController extends PKPBaseController
             'submissionExternalId' => (string)$submissionId,
             'reviewAssignmentExternalId' => (string)$reviewAssignmentId,
             'reviewFormResponsesWritten' => count($validatedFormResponses),
+            ...(is_array($recommendationWriteback) ? ['reviewerRecommendation' => $recommendationWriteback] : []),
             'written' => true,
         ]);
+    }
+
+    private function reviewerRecommendationCapabilities(object $context): array
+    {
+        return [$this->nativeReviewerRecommendationsAvailable() ? 'review.recommendations.native' : 'review.recommendations.legacy'];
+    }
+
+    private function nativeReviewerRecommendationsAvailable(): bool
+    {
+        if (
+            !method_exists(Repo::class, 'reviewerRecommendation')
+            || !method_exists(ReviewAssignment::class, 'getReviewerRecommendationId')
+            || !method_exists(ReviewAssignment::class, 'setReviewerRecommendationId')
+        ) {
+            return false;
+        }
+
+        try {
+            $repository = Repo::reviewerRecommendation();
+            return is_object($repository) && method_exists($repository, 'getRecommendationOptions');
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function reviewerRecommendationCatalog(object $context, ReviewAssignment $assignment): array
+    {
+        $storage = $this->nativeReviewerRecommendationsAvailable() ? 'native' : 'legacy';
+        $options = [];
+
+        if ($storage === 'native') {
+            $rawOptions = Repo::reviewerRecommendation()->getRecommendationOptions(
+                context: $context,
+                reviewAssignment: $assignment
+            );
+            foreach (is_array($rawOptions) ? $rawOptions : [] as $externalId => $label) {
+                $externalId = (string)$externalId;
+                if (!ctype_digit($externalId) || (int)$externalId < 1) continue;
+                $options[] = [
+                    'externalId' => $externalId,
+                    'label' => $this->reviewFormPlainText($label),
+                ];
+            }
+            $selected = method_exists($assignment, 'getReviewerRecommendationId')
+                ? $assignment->getReviewerRecommendationId()
+                : null;
+        } else {
+            foreach (ReviewAssignment::getReviewerRecommendationOptions() as $externalId => $translationKey) {
+                $externalId = (string)$externalId;
+                if ($externalId === '' || !ctype_digit($externalId) || (int)$externalId < 1) continue;
+                $options[] = [
+                    'externalId' => $externalId,
+                    'label' => $this->reviewFormPlainText(__((string)$translationKey)),
+                ];
+            }
+            $selected = $assignment->getRecommendation();
+        }
+
+        $selectedExternalId = is_scalar($selected) && ctype_digit((string)$selected)
+            && in_array((string)$selected, array_column($options, 'externalId'), true)
+            ? (string)$selected
+            : null;
+
+        return [
+            'storage' => $storage,
+            'options' => $options,
+            'selectedExternalId' => $selectedExternalId,
+        ];
+    }
+
+    private function persistReviewerRecommendation(object $context, ReviewAssignment $assignment, string $externalId): array|JsonResponse
+    {
+        $catalog = $this->reviewerRecommendationCatalog($context, $assignment);
+        $selected = null;
+        foreach ($catalog['options'] as $option) {
+            if ($option['externalId'] === $externalId) {
+                $selected = $option;
+                break;
+            }
+        }
+        if (!$selected) {
+            return $this->error(
+                'invalid_reviewer_recommendation',
+                'The selected reviewer recommendation is not offered for this review assignment.',
+                422,
+                ['availableExternalIds' => array_column($catalog['options'], 'externalId')]
+            );
+        }
+
+        if ($catalog['storage'] === 'native') {
+            Repo::reviewAssignment()->edit($assignment, ['reviewerRecommendationId' => (int)$externalId]);
+        } else {
+            Repo::reviewAssignment()->edit($assignment, ['recommendation' => (int)$externalId]);
+        }
+
+        return [
+            'externalId' => $externalId,
+            'label' => $selected['label'],
+            'storage' => $catalog['storage'],
+        ];
     }
 
     private function validateReviewFormResponses(ReviewAssignment $assignment, array $responses): array|JsonResponse
