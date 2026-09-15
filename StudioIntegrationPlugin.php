@@ -370,8 +370,9 @@ class StudioIntegrationPlugin extends GenericPlugin
             'submission' => ['externalId' => (string)$submissionId],
             'reviewAssignment' => [
                 'externalId' => (string)$reviewAssignment->getId(),
+                'round' => (int)$reviewAssignment->getRound(),
             ],
-            'actor' => ['externalId' => (string)$user->getId()],
+              'actor' => ['externalId' => (string)$user->getId()],
             'actorMode' => 'review',
             'scope' => [
                 'review.metadata.read',
