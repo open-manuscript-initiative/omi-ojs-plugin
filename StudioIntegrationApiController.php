@@ -619,7 +619,7 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-        if (!$this->hasAnyScope($claims, ['review.identity.read', 'contributors.read'])) {
+        if (!$this->hasScope($claims, 'review.identity.read')) {
             return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'review.identity.read']);
         }
 
