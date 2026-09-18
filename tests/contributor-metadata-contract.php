@@ -37,4 +37,36 @@ if (!str_contains($source, "'scope' => ['type' => 'submission'")) {
     exit(1);
 }
 
-echo "Contributor metadata contract checks passed\n";
+
+$plugin = file_get_contents(__DIR__ . '/../StudioIntegrationPlugin.php');
+$controller = file_get_contents(__DIR__ . '/../StudioIntegrationApiController.php');
+if ($plugin === false || $controller === false) {
+    fwrite(STDERR, "Unable to read integration scope sources.\n");
+    exit(1);
+}
+
+if (!preg_match("/:\\s*\\[\\s*'metadata\\.read',\\s*'contributors\\.read',\\s*'files\\.read'/s", $plugin)) {
+    fwrite(STDERR, "Author launch does not grant contributor reads.\n");
+    exit(1);
+}
+
+$reviewerStart = strpos($controller, 'public function reviewers');
+$reviewerEnd = $reviewerStart === false
+    ? false
+    : strpos($controller, 'public function ', $reviewerStart + 24);
+$reviewerBlock = $reviewerStart === false
+    ? ''
+    : substr(
+        $controller,
+        $reviewerStart,
+        $reviewerEnd === false ? null : $reviewerEnd - $reviewerStart
+    );
+if (
+    !str_contains($reviewerBlock, "hasScope(\$claims, 'review.identity.read')") ||
+    str_contains($reviewerBlock, "contributors.read")
+) {
+    fwrite(STDERR, "Reviewer identity access is not isolated from contributor scope.\n");
+    exit(1);
+}
+
+echo "Contributor metadata and identity-scope contract checks passed\n";
