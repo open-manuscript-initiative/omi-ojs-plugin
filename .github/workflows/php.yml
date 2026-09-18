@@ -43,6 +43,12 @@ jobs:
       - name: Check editorial transfer contract
         run: php tests/html-galley-transfer.php
 
+      - name: Check publication artifact provenance
+        run: php tests/publication-artifact-document.php
+
+      - name: Check publication artifact transfer contract
+        run: php tests/publication-artifact-transfer.php
+
       - name: Lint PHP sources
         shell: bash
         run: |
@@ -86,6 +92,7 @@ jobs:
             StudioIntegrationPlugin.php
             StudioIntegrationApiHandler.php
             StudioIntegrationApiController.php
+            classes/Core/PublicationArtifactDocument.php
           )
           for file in "${required[@]}"; do
             test -s "$file" || { echo "Missing or empty required file: $file" >&2; exit 1; }
