@@ -46,6 +46,9 @@ jobs:
       - name: Check publication artifact provenance
         run: php tests/publication-artifact-document.php
 
+      - name: Check contributor metadata contract
+        run: php tests/contributor-metadata-contract.php
+
       - name: Check publication artifact transfer contract
         run: php tests/publication-artifact-transfer.php
 
