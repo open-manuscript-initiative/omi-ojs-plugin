@@ -323,7 +323,7 @@ final class PublicationArtifactDocument
         if (is_bool($value) || is_int($value) || is_float($value) || is_string($value)) {
             $encoded = json_encode(
                 $value,
-                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION
+                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             );
             if ($encoded === false) {
                 throw new InvalidArgumentException('Unable to canonicalize publication-build provenance.');
