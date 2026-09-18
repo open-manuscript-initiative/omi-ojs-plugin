@@ -10,7 +10,7 @@ The plugin implements the **OMI Integration API v1 / OJS profile** (`omi-integra
 - **Plugin type:** PKP Generic Plugin
 - **OMI protocol:** `omi-integration/1`
 - **Profile:** `omi-integration/1/ojs`
-- **Current source version:** `1.5.0.0`
+- **Current source version:** `1.5.1.0`
 - **License:** GNU General Public License v3.0
 
 The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms, signed review writeback, direct author submissions, and editor-authenticated publication artifact transfer. Development on `main` may contain improvements that are newer than the latest published release.
@@ -42,7 +42,7 @@ The integration is designed so that:
 ### Manuscript and metadata access
 
 - submission metadata read;
-- contributor metadata read for authorized roles;
+- contributor metadata read for authorized roles, including preferred public name, structured affiliations/ROR, biography, competing interests, publication-list visibility and CRediT roles;
 - manuscript/source-file discovery;
 - protected binary submission-file transfer;
 - genre-aware source-file metadata;
