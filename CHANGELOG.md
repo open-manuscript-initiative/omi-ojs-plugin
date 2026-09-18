@@ -6,6 +6,7 @@
 - Export structured affiliations with ROR identifiers when available while preserving the existing flattened affiliation field for compatibility.
 - Export PKP CRediT role identifiers and degrees without inferring contributor semantics in Studio.
 - Keep reviewer launch boundaries unchanged; extended contributor metadata is available only through the existing contributor-authorized workflow.
+- Grant author launches `contributors.read` for their own accessible submission while requiring the separate `review.identity.read` scope for reviewer discovery.
 
 ## 1.5.0.0 — 2026-09-18
 
