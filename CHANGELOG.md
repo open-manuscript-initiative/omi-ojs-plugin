@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0.0 — 2026-09-18
+
+- Add editor-authenticated `omi-publication-artifact/1` inspection and transfer for existing unpublished OJS 3.5 production submissions.
+- Support provenance-verified self-contained HTML, JATS XML, print PDF and interactive PDF publication artifacts.
+- Advertise granular publication artifact capabilities and format availability through Integration API capability discovery.
+- Require and independently verify `omi-publication-build@0.1.0` provenance, exact artifact byte length, SHA-256 digest, manuscript identity, output identity, generator identity and deterministic build URN before persistence.
+- Keep `.omi-build.json` provenance internal to verification rather than exposing it as a public galley; return the verified build ID and artifact digest in the transfer receipt.
+- Give each manuscript/locale/format a stable galley identity; identical retries are idempotent while changed artifacts create a new proof file without publishing or approving the galley.
+- Preserve the legacy `omi-html-galley/1` endpoint for older Studio clients.
+- Add offline safety checks for JATS DTD declarations, PDF signatures and the existing restricted self-contained HTML model.
+- Keep OJS authoritative by rechecking Production-stage editorial access and current unpublished publication state under database locks before transfer.
+- Update the Integration API implementation version to 1.5.0 and plugin package version to 1.5.0.0.
+
 ## 1.4.1.0 — 2026-09-15
 
 - Add assignment-scoped OJS reviewer recommendation options to the OMI Integration API.

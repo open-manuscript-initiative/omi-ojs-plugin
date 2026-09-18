@@ -6,6 +6,7 @@ use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Ojs35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use APP\plugins\generic\studioIntegration\classes\Core\HtmlGalleyDocument;
+use APP\plugins\generic\studioIntegration\classes\Core\PublicationArtifactDocument;
 use APP\submission\Submission;
 use Illuminate\Support\Facades\DB;
 use PKP\plugins\PluginRegistry;
@@ -62,6 +63,298 @@ class StudioIntegrationApiController extends PKPBaseController
                 Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN,
                 Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT,
             ])])->name('api.omiIntegration.htmlGalley');
+        Route::post('publication-artifact', $this->publicationArtifact(...))
+            ->middleware(['has.user', self::roleAuthorizer([
+                Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN,
+                Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT,
+            ])])->name('api.omiIntegration.publicationArtifact');
+    }
+
+
+    /**
+     * Provenance-verified publication artifact transfer.
+     *
+     * OJS remains authoritative: only an editor with production-stage access
+     * may transfer, the current publication must still be unpublished, and
+     * transferred galleys are left unapproved for native OJS review.
+     */
+    public function publicationArtifact(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate([
+            'action' => 'required|in:inspect,transfer',
+            'submissionId' => 'required|integer|min:1',
+            'manuscriptId' => 'required|string|max:128',
+            'publicationId' => 'required_if:action,transfer|integer|min:1',
+            'locale' => 'required_if:action,transfer|string|max:32',
+            'genreId' => 'required_if:action,transfer|integer|min:1',
+            'format' => 'required_if:action,transfer|in:html,jats,pdf-print,pdf-interactive',
+            'mediaType' => 'required_if:action,transfer|string|max:128',
+            'fileName' => 'required_if:action,transfer|string|max:255',
+            'artifactBase64' => 'required_if:action,transfer|string|max:90000000',
+            'build' => 'required_if:action,transfer|array',
+            'confirmed' => 'required_if:action,transfer|accepted',
+        ]);
+
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error(
+                'editor_required',
+                'An authenticated editor in an enabled context is required.',
+                403
+            );
+        }
+
+        $submissionId = (int)$data['submissionId'];
+        $authorize = function () use ($context, $user, $submissionId, $data) {
+            $submission = Repo::submission()->get($submissionId);
+            if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()) {
+                abort(404, 'Submission not found.');
+            }
+
+            $stages = Repo::user()->getAccessibleWorkflowStages(
+                $user->getId(),
+                $context->getId(),
+                $submission
+            );
+            if (!array_intersect($stages[WORKFLOW_STAGE_ID_PRODUCTION] ?? [], [
+                Role::ROLE_ID_MANAGER,
+                Role::ROLE_ID_SITE_ADMIN,
+                Role::ROLE_ID_SUB_EDITOR,
+                Role::ROLE_ID_ASSISTANT,
+            ])) {
+                abort(403, 'Editorial access to this submission in production is required.');
+            }
+
+            $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+            if (
+                (int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION ||
+                !$publication ||
+                (int)$publication->getData('status') !== Submission::STATUS_QUEUED ||
+                (isset($data['publicationId']) &&
+                    (int)$data['publicationId'] !== (int)$publication->getId())
+            ) {
+                abort(
+                    409,
+                    'Inspect the current unpublished production version before transferring a publication artifact.'
+                );
+            }
+            return [$submission, $publication];
+        };
+
+        [$submission, $publication] = $authorize();
+
+        $reader = PluginRegistry::getPlugin('generic', 'htmlarticlegalleyplugin');
+        $htmlAvailable = $reader && $reader->getEnabled($context->getId());
+
+        $genres = [];
+        $enabled = DAORegistry::getDAO('GenreDAO')->getEnabledByContextId($context->getId());
+        while ($genre = $enabled->next()) {
+            if (!$genre->getDependent() && !$genre->getSupplementary()) {
+                $genres[] = [
+                    'id' => (int)$genre->getId(),
+                    'label' => $genre->getLocalizedName(),
+                ];
+            }
+        }
+        $locales = array_values($context->getSupportedSubmissionLocales());
+
+        if ($data['action'] === 'inspect') {
+            return response()->json([
+                'protocol' => PublicationArtifactDocument::PROTOCOL,
+                'submissionId' => $submissionId,
+                'publicationId' => (int)$publication->getId(),
+                'title' => $publication->getLocalizedData('title'),
+                'locales' => $locales,
+                'genres' => $genres,
+                'formats' => PublicationArtifactDocument::formats((bool)$htmlAvailable),
+                'provenance' => [
+                    'required' => true,
+                    'model' => PublicationArtifactDocument::BUILD_MODEL,
+                    'version' => PublicationArtifactDocument::BUILD_VERSION,
+                    'digest' => 'sha256',
+                ],
+                'published' => false,
+            ]);
+        }
+
+        if (
+            !in_array($data['locale'], $locales, true) ||
+            !in_array((int)$data['genreId'], array_column($genres, 'id'), true)
+        ) {
+            return $this->error(
+                'invalid_options',
+                'Choose an enabled publication language and article file genre.',
+                422
+            );
+        }
+        if ($data['format'] === 'html' && !$htmlAvailable) {
+            return $this->error(
+                'html_reader_required',
+                'Enable the OJS HTML Article Galley plugin before transferring HTML.',
+                409
+            );
+        }
+
+        try {
+            $artifact = PublicationArtifactDocument::validateTransfer(
+                (string)$data['format'],
+                (string)$data['mediaType'],
+                (string)$data['fileName'],
+                (string)$data['artifactBase64'],
+                (array)$data['build'],
+                (string)$data['manuscriptId']
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error('invalid_publication_artifact', $e->getMessage(), 422);
+        }
+
+        $storedName = 'omi-' .
+            preg_replace('/[^a-z0-9]+/i', '-', (string)$data['format']) .
+            '-' . $artifact['sha256'] . '.' . $artifact['extension'];
+        $path = PublicationArtifactDocument::path(
+            (string)$data['manuscriptId'],
+            (string)$data['locale'],
+            (string)$data['format']
+        );
+
+        $temporary = tmpfile();
+        if (!$temporary) {
+            return $this->error('storage_error', 'Unable to allocate temporary storage.', 500);
+        }
+
+        $fileId = null;
+        $used = false;
+        try {
+            $bytes = $artifact['bytes'];
+            if (fwrite($temporary, $bytes) !== strlen($bytes)) {
+                throw new \RuntimeException('Unable to write publication artifact.');
+            }
+
+            $dir = Repo::submissionFile()->getSubmissionDir($context->getId(), $submissionId);
+            $fileId = app()->get('file')->add(
+                stream_get_meta_data($temporary)['uri'],
+                $dir . '/' . bin2hex(random_bytes(16)) . '.' . $artifact['extension']
+            );
+
+            $receipt = DB::transaction(function () use (
+                $authorize,
+                $submissionId,
+                $data,
+                $path,
+                $storedName,
+                $fileId,
+                $context,
+                $user,
+                $artifact,
+                &$used
+            ) {
+                DB::table('submissions')
+                    ->where('submission_id', $submissionId)
+                    ->lockForUpdate()
+                    ->first();
+                DB::table('publications')
+                    ->where('publication_id', (int)$data['publicationId'])
+                    ->lockForUpdate()
+                    ->first();
+
+                [$submission, $publication] = $authorize();
+                $galley = Repo::galley()->getByUrlPath($path, $publication);
+                $existingFile = $galley && $galley->getData('submissionFileId')
+                    ? Repo::submissionFile()->get(
+                        (int)$galley->getData('submissionFileId'),
+                        $submissionId
+                    )
+                    : null;
+
+                if (
+                    $existingFile &&
+                    $existingFile->getData('name', $data['locale']) === $storedName
+                ) {
+                    return [
+                        'galleyId' => (int)$galley->getId(),
+                        'submissionFileId' => (int)$existingFile->getId(),
+                        'unchanged' => true,
+                    ];
+                }
+
+                if (!$galley) {
+                    $galleyId = Repo::galley()->add(
+                        Repo::galley()->newDataObject([
+                            'publicationId' => (int)$publication->getId(),
+                            'submissionFileId' => null,
+                            'label' => $artifact['label'],
+                            'locale' => $data['locale'],
+                            'urlPath' => $path,
+                            'isApproved' => false,
+                        ])
+                    );
+                    $galley = Repo::galley()->get($galleyId);
+                }
+
+                $params = [
+                    'fileId' => $fileId,
+                    'submissionId' => $submissionId,
+                    'uploaderUserId' => (int)$user->getId(),
+                    'fileStage' => SubmissionFile::SUBMISSION_FILE_PROOF,
+                    'genreId' => (int)$data['genreId'],
+                    'assocType' => Application::ASSOC_TYPE_REPRESENTATION,
+                    'assocId' => (int)$galley->getId(),
+                    'name' => [
+                        $data['locale'] => $storedName,
+                        $submission->getData('locale') => $storedName,
+                    ],
+                ];
+
+                $errors = Repo::submissionFile()->validate(
+                    null,
+                    $params,
+                    $context->getSupportedSubmissionMetadataLocales(),
+                    $submission->getData('locale')
+                );
+                if ($errors) {
+                    abort(422, 'The publication proof file failed OJS validation.');
+                }
+
+                $submissionFileId = Repo::submissionFile()->add(
+                    Repo::submissionFile()->newDataObject($params)
+                );
+                Repo::galley()->edit($galley, [
+                    'submissionFileId' => $submissionFileId,
+                    'label' => $artifact['label'],
+                    'isApproved' => false,
+                ]);
+                $used = true;
+
+                return [
+                    'galleyId' => (int)$galley->getId(),
+                    'submissionFileId' => $submissionFileId,
+                    'unchanged' => false,
+                ];
+            });
+
+            return response()->json(array_merge($receipt, [
+                'protocol' => PublicationArtifactDocument::PROTOCOL,
+                'submissionId' => $submissionId,
+                'publicationId' => (int)$data['publicationId'],
+                'format' => $data['format'],
+                'mediaType' => $artifact['mediaType'],
+                'artifactFileName' => $artifact['fileName'],
+                'sha256' => $artifact['sha256'],
+                'buildId' => $artifact['buildId'],
+                'provenanceVerified' => true,
+                'published' => false,
+            ]));
+        } catch (\Throwable $e) {
+            $used = false;
+            throw $e;
+        } finally {
+            fclose($temporary);
+            if ($fileId !== null && !$used) {
+                app()->get('file')->delete($fileId);
+            }
+        }
     }
 
     /** Native OJS API-token authorization; the shared integration secret is not an editor credential. */
@@ -226,7 +519,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.4.1',
+                'version' => '1.5.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -249,8 +542,24 @@ class StudioIntegrationApiController extends PKPBaseController
                 'review.forms.native',
                 'review.files.scoped',
                 'editor.html-galley.write',
+                'editor.publication-artifact.write',
+                'publication.html.write',
+                'publication.jats.write',
+                'publication.pdf.write',
+                'publication.provenance.verify',
                 'review.recommendations',
                 ...$this->reviewerRecommendationCapabilities($context),
+            ],
+            'publicationArtifacts' => [
+                'protocol' => PublicationArtifactDocument::PROTOCOL,
+                'provenanceModel' => PublicationArtifactDocument::BUILD_MODEL,
+                'provenanceVersion' => PublicationArtifactDocument::BUILD_VERSION,
+                'formats' => PublicationArtifactDocument::formats(
+                    (bool)(
+                        ($htmlReader = PluginRegistry::getPlugin('generic', 'htmlarticlegalleyplugin')) &&
+                        $htmlReader->getEnabled($context->getId())
+                    )
+                ),
             ],
         ]);
     }
