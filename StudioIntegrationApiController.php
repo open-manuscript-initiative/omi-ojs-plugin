@@ -519,7 +519,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.5.0',
+                'version' => '1.5.1',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -619,7 +619,7 @@ class StudioIntegrationApiController extends PKPBaseController
         $authorized = $this->authorizeSubmissionRequest($illuminateRequest);
         if ($authorized instanceof JsonResponse) return $authorized;
         [$claims, $submissionId, $context] = $authorized;
-        if (!$this->hasAnyScope($claims, ['review.identity.read', 'contributors.read'])) {
+        if (!$this->hasScope($claims, 'review.identity.read')) {
             return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'review.identity.read']);
         }
 
