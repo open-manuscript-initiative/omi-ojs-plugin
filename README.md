@@ -10,10 +10,10 @@ The plugin implements the **OMI Integration API v1 / OJS profile** (`omi-integra
 - **Plugin type:** PKP Generic Plugin
 - **OMI protocol:** `omi-integration/1`
 - **Profile:** `omi-integration/1/ojs`
-- **Current stable release:** `v1.2.0`
+- **Current source version:** `1.5.0.0`
 - **License:** GNU General Public License v3.0
 
-The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms and signed review writeback. Development on `main` may contain improvements that are newer than the latest published release.
+The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms, signed review writeback, direct author submissions, and editor-authenticated publication artifact transfer. Development on `main` may contain improvements that are newer than the latest published release.
 
 ## What the plugin does
 
@@ -67,6 +67,18 @@ The integration is designed so that:
 - reviewer identity access only through explicit editorial scopes;
 - role-aware launch and API authorization designed to preserve OJS workflow authority.
 
+### Publication artifacts
+
+- production-stage inspection before transfer;
+- provenance-verified transfer of self-contained HTML, JATS XML, print PDF and interactive PDF artifacts;
+- independent verification of `omi-publication-build@0.1.0` SHA-256 provenance;
+- stable per-manuscript/locale/format galley identity and idempotent retries;
+- changed artifacts create a new proof while keeping the same logical galley;
+- transferred galleys remain unapproved and unpublished until an OJS editor acts;
+- legacy HTML galley transfer remains available for older Studio clients.
+
+See [Publication artifact transfer](docs/publication-artifact-transfer.md).
+
 ## Security model
 
 Launch assertions are scoped to one OJS installation, journal, submission, actor and role, and expire after the configured TTL. Studio authenticates protected API calls with:
@@ -111,7 +123,8 @@ The plugin exposes integration endpoints inside the current journal context thro
 - reviewer candidates;
 - submission files and protected file content;
 - review forms and assignment-scoped reviewer recommendation options;
-- review-result writeback.
+- review-result writeback;
+- publication artifact inspection and transfer for authorized Production-stage editors.
 
 Clients must not assume that possession of a submission ID grants access. Every protected request is checked against the signed launch assertion and the current OJS context.
 
@@ -137,7 +150,7 @@ Published releases include installable ZIP/TAR.GZ packages and checksums. The cu
 - https://github.com/open-manuscript-initiative/omi-ojs-plugin/releases
 - https://openmanuscript.org/docs/integrations/ojs-plugin
 
-Release CI validates PHP syntax, `version.xml`, required plugin files and package structure before publication.
+Release CI validates PHP syntax, `version.xml`, publication artifact/provenance contracts, required plugin files and package structure before publication.
 
 ## Compatibility and PKP alignment
 
@@ -160,6 +173,7 @@ OMI documentation:
 - OJS manuscript file import: https://openmanuscript.org/docs/integrations/ojs-file-import
 - OMI Integration API v1: https://openmanuscript.org/docs/integrations/integration-api-v1
 - Integration architecture: https://openmanuscript.org/docs/integrations/architecture
+- Publication artifact transfer protocol: [docs/publication-artifact-transfer.md](docs/publication-artifact-transfer.md)
 
 Project repositories:
 
