@@ -93,6 +93,7 @@ final class Ojs35Adapter
             return [];
         }
         $result = [];
+        $primaryLocale = (string)$submission->getData('locale');
         foreach ($authors as $author) {
             $orcid = $author->getData('orcid');
             $identifiers = [];
@@ -105,12 +106,25 @@ final class Ojs35Adapter
                     'given' => (string)$author->getLocalizedGivenName(),
                     'family' => (string)$author->getLocalizedFamilyName(),
                 ],
+                'preferredPublicName' => $this->normalizeLocaleObject(
+                    $author->getData('preferredPublicName')
+                ),
                 'email' => (string)($author->getData('email') ?? ''),
                 'affiliation' => $author->getLocalizedAffiliationNamesAsString(),
+                'affiliations' => $this->mapAffiliations($author, $primaryLocale),
                 'country' => $author->getData('country'),
+                'url' => $this->nullableString($author->getData('url')),
+                'biography' => $this->normalizeLocaleObject($author->getData('biography')),
+                'competingInterests' => $this->normalizeLocaleObject(
+                    $author->getData('competingInterests')
+                ),
                 'roles' => ['author'],
                 'sequence' => $author->getSequence(),
                 'primaryContact' => (bool)$author->getPrimaryContact(),
+                'includeInBrowse' => (bool)($author->getData('includeInBrowse') ?? true),
+                'creditRoles' => $this->normalizeCreditRoles(
+                    $author->getData('creditRoles')
+                ),
                 'identifiers' => $identifiers,
                 'scope' => ['type' => 'submission', 'externalId' => (string)$submission->getId()],
             ];
@@ -147,6 +161,76 @@ final class Ojs35Adapter
                 'createdAt' => $this->formatDate($file->getData('createdAt')),
                 'updatedAt' => $this->formatDate($file->getData('updatedAt')),
             ];
+        }
+        return $result;
+    }
+
+    private function mapAffiliations(object $author, string $primaryLocale): array
+    {
+        if (!method_exists($author, 'getAffiliations')) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($author->getAffiliations() as $affiliation) {
+            $names = method_exists($affiliation, 'getName')
+                ? $affiliation->getName()
+                : null;
+            $normalizedNames = $this->normalizeLocaleObject($names);
+            if ($normalizedNames === [] && method_exists($affiliation, 'getLocalizedName')) {
+                $localized = trim((string)$affiliation->getLocalizedName($primaryLocale));
+                if ($localized !== '') {
+                    $normalizedNames[$primaryLocale] = $localized;
+                }
+            }
+            $ror = method_exists($affiliation, 'getRor')
+                ? $this->nullableString($affiliation->getRor())
+                : null;
+            if ($normalizedNames === [] && $ror === null) {
+                continue;
+            }
+            $result[] = [
+                'name' => $normalizedNames,
+                'ror' => $ror,
+            ];
+        }
+        return $result;
+    }
+
+    private function normalizeCreditRoles(mixed $value): array
+    {
+        if ($value instanceof \Traversable) {
+            $value = iterator_to_array($value);
+        }
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($value as $item) {
+            if (is_string($item)) {
+                $role = trim($item);
+                if ($role !== '') {
+                    $result[] = ['role' => $role];
+                }
+                continue;
+            }
+            if (is_object($item)) {
+                $item = (array)$item;
+            }
+            if (!is_array($item)) {
+                continue;
+            }
+            $role = trim((string)($item['role'] ?? ''));
+            if ($role === '') {
+                continue;
+            }
+            $entry = ['role' => $role];
+            $degree = trim((string)($item['degree'] ?? ''));
+            if ($degree !== '') {
+                $entry['degree'] = $degree;
+            }
+            $result[] = $entry;
         }
         return $result;
     }
