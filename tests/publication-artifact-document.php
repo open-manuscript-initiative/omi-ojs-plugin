@@ -97,7 +97,7 @@ function buildManifest(
         'manuscript' => $manifest['manuscript'],
         'profile' => $manifest['profile'],
         'output' => $manifest['output'],
-        ...isset($manifest['rendererInput']) ? ['rendererInput' => $manifest['rendererInput']] : [],
+        ...(isset($manifest['rendererInput']) ? ['rendererInput' => $manifest['rendererInput']] : []),
         'generator' => $manifest['generator'],
     ];
 }
