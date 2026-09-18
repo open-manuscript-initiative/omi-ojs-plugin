@@ -123,7 +123,9 @@ final class Ojs35Adapter
                 'primaryContact' => (bool)$author->getPrimaryContact(),
                 'includeInBrowse' => (bool)($author->getData('includeInBrowse') ?? true),
                 'creditRoles' => $this->normalizeCreditRoles(
-                    $author->getData('creditRoles')
+                    method_exists($author, 'getCreditRoles')
+                        ? $author->getCreditRoles()
+                        : $author->getData('creditRoles')
                 ),
                 'identifiers' => $identifiers,
                 'scope' => ['type' => 'submission', 'externalId' => (string)$submission->getId()],
