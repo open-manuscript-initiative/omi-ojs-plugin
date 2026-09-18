@@ -233,6 +233,16 @@ namespace {
                     'value' => hash('sha256', $bytes),
                 ],
             ],
+            ...str_starts_with($format, 'pdf') ? [
+                'rendererInput' => [
+                    'mediaType' => 'text/html;charset=utf-8',
+                    'byteLength' => 31,
+                    'digest' => [
+                        'algorithm' => 'sha256',
+                        'value' => hash('sha256', '<html><body>PDF</body></html>'),
+                    ],
+                ],
+            ] : [],
             'generator' => [
                 'application' => 'open-manuscript-studio',
                 'applicationVersion' => '0.2.0-beta.1',
