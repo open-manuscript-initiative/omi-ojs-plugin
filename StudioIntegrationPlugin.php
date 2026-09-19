@@ -378,6 +378,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             'scope' => [
                 'review.metadata.read',
                 'review.files.read',
+                'review.files.write',
                 'review.manuscript.read',
                 'review.revision.write',
                 'review.response.write',

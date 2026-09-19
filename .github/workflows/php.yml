@@ -49,6 +49,12 @@ jobs:
       - name: Check contributor metadata contract
         run: php tests/contributor-metadata-contract.php
 
+      - name: Check workflow file payload validation
+        run: php tests/workflow-file-document.php
+
+      - name: Check native revision writeback contract
+        run: php tests/revision-writeback-contract.php
+
       - name: Check publication artifact transfer contract
         run: php tests/publication-artifact-transfer.php
 
@@ -96,6 +102,7 @@ jobs:
             StudioIntegrationApiHandler.php
             StudioIntegrationApiController.php
             classes/Core/PublicationArtifactDocument.php
+            classes/Core/WorkflowFileDocument.php
           )
           for file in "${required[@]}"; do
             test -s "$file" || { echo "Missing or empty required file: $file" >&2; exit 1; }

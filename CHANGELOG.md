@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.0.0 — 2026-09-19
+
+- Add signed Studio → OJS reviewer-file writeback bound to the concrete native review assignment and external-review round.
+- Store reviewer-returned files as native `SUBMISSION_FILE_REVIEW_ATTACHMENT` records associated with the OJS `ReviewAssignment`, while refusing declined, completed, thanked and cancelled assignments.
+- Add signed Studio → OJS author-revision writeback for the latest external review round after an OJS decision opens revision upload.
+- Store author revisions as new native `SUBMISSION_FILE_REVIEW_REVISION` records associated with the OJS `ReviewRound`; original source files are never overwritten.
+- Mirror OJS 3.5 author revision eligibility for accept, pending-revisions, new-external-round and resubmit decisions.
+- Validate workflow file names, media types, strict Base64 payloads and native OJS submission-file metadata; return byte length, SHA-256 and native submission-file IDs.
+- Advertise operational `review.files.write` support and include it in reviewer launch assertions.
+- Add CI contract coverage and documentation for native reviewer and author file writeback.
+
 ## 1.5.1.0 — 2026-09-19
 
 - Expand authorized contributor import with preferred public name, email, country, URL, biography, competing-interests statement, browse-list visibility and primary-contact state.

@@ -10,7 +10,7 @@ The plugin implements the **OMI Integration API v1 / OJS profile** (`omi-integra
 - **Plugin type:** PKP Generic Plugin
 - **OMI protocol:** `omi-integration/1`
 - **Profile:** `omi-integration/1/ojs`
-- **Current source version:** `1.5.1.0`
+- **Current source version:** `1.6.0.0`
 - **License:** GNU General Public License v3.0
 
 The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms, signed review writeback, direct author submissions, and editor-authenticated publication artifact transfer. Development on `main` may contain improvements that are newer than the latest published release.
@@ -59,6 +59,8 @@ The integration is designed so that:
 - native review-form response persistence;
 - author-visible and editor-only review comments kept separate;
 - signed Studio → OJS review-result writeback;
+- native reviewer returned-file writeback bound to the concrete review assignment and round;
+- native author revision writeback into the latest writable OJS external-review round without replacing source files;
 - reviewer revision/response scopes without contributor or reviewer-identity leakage.
 
 ### Editor integration
@@ -77,7 +79,7 @@ The integration is designed so that:
 - transferred galleys remain unapproved and unpublished until an OJS editor acts;
 - legacy HTML galley transfer remains available for older Studio clients.
 
-See [Publication artifact transfer](docs/publication-artifact-transfer.md).
+See [Publication artifact transfer](docs/publication-artifact-transfer.md) and [Native review and author revision writeback](docs/revision-writeback.md).
 
 ## Security model
 
@@ -124,6 +126,7 @@ The plugin exposes integration endpoints inside the current journal context thro
 - submission files and protected file content;
 - review forms and assignment-scoped reviewer recommendation options;
 - review-result writeback;
+- reviewer returned-file and author revision writeback through native OJS submission-file stages;
 - publication artifact inspection and transfer for authorized Production-stage editors.
 
 Clients must not assume that possession of a submission ID grants access. Every protected request is checked against the signed launch assertion and the current OJS context.

@@ -2,11 +2,13 @@
 namespace APP\plugins\generic\studioIntegration;
 
 use APP\core\Application;
+use APP\decision\Decision;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Ojs35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use APP\plugins\generic\studioIntegration\classes\Core\HtmlGalleyDocument;
 use APP\plugins\generic\studioIntegration\classes\Core\PublicationArtifactDocument;
+use APP\plugins\generic\studioIntegration\classes\Core\WorkflowFileDocument;
 use APP\submission\Submission;
 use Illuminate\Support\Facades\DB;
 use PKP\plugins\PluginRegistry;
@@ -58,6 +60,8 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
         Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
+        Route::post('review-file', $this->reviewFile(...))->name('api.omiIntegration.reviewFile');
+        Route::post('author-revision', $this->authorRevision(...))->name('api.omiIntegration.authorRevision');
         Route::post('html-galley', $this->htmlGalley(...))
             ->middleware(['has.user', self::roleAuthorizer([
                 Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN,
@@ -519,7 +523,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.5.1',
+                'version' => '1.6.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -534,6 +538,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'author.revision.write',
                 'review.metadata.read',
                 'review.files.read',
+                'review.files.write',
                 'review.manuscript.read',
                 'review.revision.write',
                 'review.response.write',
@@ -862,6 +867,335 @@ class StudioIntegrationApiController extends PKPBaseController
             ...(is_array($recommendationWriteback) ? ['reviewerRecommendation' => $recommendationWriteback] : []),
             'written' => true,
         ]);
+    }
+
+    /**
+     * Store a reviewer-returned file through the native OJS review attachment model.
+     *
+     * The OMI service signature authenticates Studio. OJS still resolves the
+     * concrete assignment, round and reviewer and refuses completed, thanked,
+     * cancelled or declined assignments.
+     */
+    public function reviewFile(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $context = Application::get()->getRequest()->getContext();
+        if (!$context) return $this->error('context_required', 'A journal context is required.', 400);
+        $serviceError = $this->authorizeServiceRequest($illuminateRequest, $context->getId());
+        if ($serviceError) return $serviceError;
+
+        $submissionId = (int)$illuminateRequest->input('submissionExternalId', 0);
+        $reviewAssignmentId = (int)$illuminateRequest->input('reviewAssignmentExternalId', 0);
+        $round = (int)$illuminateRequest->input('reviewRound', 0);
+        if ($submissionId < 1 || $reviewAssignmentId < 1 || $round < 1) {
+            return $this->error(
+                'invalid_review_file',
+                'A valid submission, review assignment and review round are required.',
+                400
+            );
+        }
+
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission) {
+            return $this->error('submission_not_found', 'Submission not found in this journal.', 404);
+        }
+
+        $assignment = Repo::reviewAssignment()->get($reviewAssignmentId, $submissionId);
+        if (!($assignment instanceof ReviewAssignment)) {
+            return $this->error('review_assignment_not_found', 'Review assignment not found.', 404);
+        }
+        if ((int)$assignment->getRound() !== $round) {
+            return $this->error(
+                'review_round_mismatch',
+                'The review assignment does not belong to the requested review round.',
+                409
+            );
+        }
+        if (!$this->reviewAssignmentAllowsFileWrite($assignment)) {
+            return $this->error(
+                'review_assignment_not_writable',
+                'The review assignment no longer accepts reviewer files.',
+                409
+            );
+        }
+
+        /** @var \PKP\submission\reviewRound\ReviewRoundDAO $reviewRoundDao */
+        $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
+        $reviewRound = $reviewRoundDao->getById((int)$assignment->getReviewRoundId());
+        if (
+            !$reviewRound ||
+            (int)$reviewRound->getSubmissionId() !== $submissionId ||
+            (int)$reviewRound->getStageId() !== WORKFLOW_STAGE_ID_EXTERNAL_REVIEW ||
+            (int)$reviewRound->getRound() !== $round
+        ) {
+            return $this->error(
+                'review_round_mismatch',
+                'The review assignment is not bound to this submission and external review round.',
+                409
+            );
+        }
+
+        $document = $this->workflowFileInput($illuminateRequest);
+        if ($document instanceof JsonResponse) return $document;
+
+        return $this->persistWorkflowFile(
+            $context,
+            $submission,
+            (int)$assignment->getReviewerId(),
+            SubmissionFile::SUBMISSION_FILE_REVIEW_ATTACHMENT,
+            Application::ASSOC_TYPE_REVIEW_ASSIGNMENT,
+            (int)$assignment->getId(),
+            null,
+            $document,
+            [
+                'kind' => 'reviewer-file',
+                'reviewAssignmentExternalId' => (string)$assignment->getId(),
+                'reviewRound' => $round,
+            ]
+        );
+    }
+
+    /**
+     * Store an author revision in the native OJS external-review revision stage.
+     *
+     * This mirrors SubmissionFileStageAccessPolicy: the author must be assigned
+     * to external review and the latest round must contain an OJS decision that
+     * permits revision upload. A new review-revision file is created; the
+     * original source file is never replaced.
+     */
+    public function authorRevision(IlluminateRequest $illuminateRequest): JsonResponse
+    {
+        $context = Application::get()->getRequest()->getContext();
+        if (!$context) return $this->error('context_required', 'A journal context is required.', 400);
+        $serviceError = $this->authorizeServiceRequest($illuminateRequest, $context->getId());
+        if ($serviceError) return $serviceError;
+
+        $submissionId = (int)$illuminateRequest->input('submissionExternalId', 0);
+        $authorId = (int)$illuminateRequest->input('authorExternalId', 0);
+        $round = (int)$illuminateRequest->input('reviewRound', 0);
+        $genreId = (int)$illuminateRequest->input('genreExternalId', 0);
+        if ($submissionId < 1 || $authorId < 1 || $round < 1 || $genreId < 1) {
+            return $this->error(
+                'invalid_author_revision',
+                'A valid submission, author, review round and file genre are required.',
+                400
+            );
+        }
+
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission) {
+            return $this->error('submission_not_found', 'Submission not found in this journal.', 404);
+        }
+
+        $author = Repo::user()->get($authorId);
+        if (!$author) {
+            return $this->error('author_not_found', 'The author account is not available.', 404);
+        }
+
+        $accessibleStages = Repo::user()->getAccessibleWorkflowStages(
+            $authorId,
+            $context->getId(),
+            $submission
+        );
+        if (!in_array(
+            Role::ROLE_ID_AUTHOR,
+            $accessibleStages[WORKFLOW_STAGE_ID_EXTERNAL_REVIEW] ?? [],
+            true
+        )) {
+            return $this->error(
+                'author_revision_forbidden',
+                'The author is not assigned to this submission in external review.',
+                403
+            );
+        }
+
+        /** @var \PKP\submission\reviewRound\ReviewRoundDAO $reviewRoundDao */
+        $reviewRoundDao = DAORegistry::getDAO('ReviewRoundDAO');
+        $reviewRound = $reviewRoundDao->getLastReviewRoundBySubmissionId(
+            $submissionId,
+            WORKFLOW_STAGE_ID_EXTERNAL_REVIEW
+        );
+        if (
+            !$reviewRound ||
+            (int)$reviewRound->getSubmissionId() !== $submissionId ||
+            (int)$reviewRound->getRound() !== $round
+        ) {
+            return $this->error(
+                'review_round_mismatch',
+                'Only the latest external review round can receive an author revision.',
+                409
+            );
+        }
+
+        $decisionCount = Repo::decision()->getCollector()
+            ->filterBySubmissionIds([$submissionId])
+            ->filterByStageIds([WORKFLOW_STAGE_ID_EXTERNAL_REVIEW])
+            ->filterByReviewRoundIds([(int)$reviewRound->getId()])
+            ->filterByDecisionTypes([
+                Decision::ACCEPT,
+                Decision::PENDING_REVISIONS,
+                Decision::NEW_EXTERNAL_ROUND,
+                Decision::RESUBMIT,
+            ])
+            ->getCount();
+        if (!$decisionCount) {
+            return $this->error(
+                'author_revision_not_requested',
+                'OJS has not opened the latest review round for author revisions.',
+                409
+            );
+        }
+
+        /** @var \PKP\submission\GenreDAO $genreDao */
+        $genreDao = DAORegistry::getDAO('GenreDAO');
+        $genre = $genreDao->getById($genreId, $context->getId());
+        if (!$genre || $genre->getDependent()) {
+            return $this->error(
+                'invalid_file_genre',
+                'The requested OJS file genre is not available for an author revision.',
+                422
+            );
+        }
+
+        $document = $this->workflowFileInput($illuminateRequest);
+        if ($document instanceof JsonResponse) return $document;
+
+        return $this->persistWorkflowFile(
+            $context,
+            $submission,
+            $authorId,
+            SubmissionFile::SUBMISSION_FILE_REVIEW_REVISION,
+            Application::ASSOC_TYPE_REVIEW_ROUND,
+            (int)$reviewRound->getId(),
+            $genreId,
+            $document,
+            [
+                'kind' => 'author-revision',
+                'authorExternalId' => (string)$authorId,
+                'reviewRound' => $round,
+            ]
+        );
+    }
+
+    private function workflowFileInput(IlluminateRequest $request): array|JsonResponse
+    {
+        $fileName = $request->input('fileName');
+        $mediaType = $request->input('mediaType');
+        $contentBase64 = $request->input('contentBase64');
+
+        if (!is_string($fileName) || !is_string($mediaType) || !is_string($contentBase64)) {
+            return $this->error(
+                'invalid_workflow_file',
+                'fileName, mediaType and contentBase64 are required string values.',
+                400
+            );
+        }
+
+        try {
+            return WorkflowFileDocument::decode($fileName, $mediaType, $contentBase64);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error('invalid_workflow_file', $e->getMessage(), 422);
+        }
+    }
+
+    private function reviewAssignmentAllowsFileWrite(ReviewAssignment $assignment): bool
+    {
+        return !in_array(
+            $assignment->getStatus(),
+            [
+                ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_DECLINED,
+                ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_COMPLETE,
+                ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_THANKED,
+                ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_CANCELLED,
+            ],
+            true
+        );
+    }
+
+    private function persistWorkflowFile(
+        object $context,
+        object $submission,
+        int $uploaderUserId,
+        int $fileStage,
+        int $assocType,
+        int $assocId,
+        ?int $genreId,
+        array $document,
+        array $receipt
+    ): JsonResponse {
+        $temporary = tmpfile();
+        if (!$temporary) {
+            return $this->error('storage_error', 'Unable to allocate temporary workflow-file storage.', 500);
+        }
+
+        $fileId = null;
+        $used = false;
+        try {
+            if (fwrite($temporary, $document['bytes']) !== $document['byteLength']) {
+                throw new \RuntimeException('Unable to write the workflow file.');
+            }
+
+            $suffix = $document['extension'] !== '' ? '.' . $document['extension'] : '';
+            $dir = Repo::submissionFile()->getSubmissionDir(
+                (int)$context->getId(),
+                (int)$submission->getId()
+            );
+            $fileId = app()->get('file')->add(
+                stream_get_meta_data($temporary)['uri'],
+                $dir . '/' . bin2hex(random_bytes(16)) . $suffix
+            );
+
+            $params = [
+                'fileId' => $fileId,
+                'submissionId' => (int)$submission->getId(),
+                'uploaderUserId' => $uploaderUserId,
+                'fileStage' => $fileStage,
+                'genreId' => $genreId,
+                'assocType' => $assocType,
+                'assocId' => $assocId,
+                'name' => [
+                    $submission->getData('locale') => $document['fileName'],
+                ],
+            ];
+
+            $errors = Repo::submissionFile()->validate(
+                null,
+                $params,
+                $context->getSupportedSubmissionMetadataLocales(),
+                $submission->getData('locale')
+            );
+            if ($errors) {
+                return $this->error(
+                    'workflow_file_validation_failed',
+                    'The file failed native OJS submission-file validation.',
+                    422,
+                    ['fields' => $errors]
+                );
+            }
+
+            $submissionFileId = Repo::submissionFile()->add(
+                Repo::submissionFile()->newDataObject($params)
+            );
+            $used = true;
+            $stored = app()->get('file')->get($fileId);
+
+            return response()->json(array_merge($receipt, [
+                'protocol' => WorkflowFileDocument::PROTOCOL,
+                'submissionExternalId' => (string)$submission->getId(),
+                'submissionFileExternalId' => (string)$submissionFileId,
+                'fileStage' => $fileStage,
+                'fileName' => $document['fileName'],
+                'mediaType' => (string)($stored->mimetype ?? 'application/octet-stream'),
+                'declaredMediaType' => $document['mediaType'],
+                'byteLength' => $document['byteLength'],
+                'sha256' => $document['sha256'],
+                'written' => true,
+            ]));
+        } finally {
+            fclose($temporary);
+            if ($fileId !== null && !$used) {
+                app()->get('file')->delete($fileId);
+            }
+        }
     }
 
     private function reviewerRecommendationCapabilities(object $context): array
