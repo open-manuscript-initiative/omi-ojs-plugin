@@ -45,7 +45,12 @@ final class WorkflowFileDocument
         if (
             $mediaType === '' ||
             strlen($mediaType) > 128 ||
-            !preg_match('#^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*(?:\s*;[^\r\n]*)?$#i', $mediaType)
+            !preg_match(
+                '~^[a-z0-9][a-z0-9!#            !preg_match('#^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*(?:\s*;[^\r\n]*)?$#i', $mediaType)
+^_.+*\x27-]*/[a-z0-9][a-z0-9!#            !preg_match('#^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*(?:\s*;[^\r\n]*)?$#i', $mediaType)
+^_.+*\x27-]*(?:\\s*;[^\\r\\n]*)?$~i',
+                $mediaType
+            )
         ) {
             throw new \InvalidArgumentException('The workflow file media type is invalid.');
         }
