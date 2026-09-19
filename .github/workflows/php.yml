@@ -102,6 +102,7 @@ jobs:
             StudioIntegrationApiHandler.php
             StudioIntegrationApiController.php
             classes/Core/PublicationArtifactDocument.php
+            classes/Core/WorkflowFileDocument.php
           )
           for file in "${required[@]}"; do
             test -s "$file" || { echo "Missing or empty required file: $file" >&2; exit 1; }
