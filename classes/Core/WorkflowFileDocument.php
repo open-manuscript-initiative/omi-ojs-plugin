@@ -46,9 +46,7 @@ final class WorkflowFileDocument
             $mediaType === '' ||
             strlen($mediaType) > 128 ||
             !preg_match(
-                '~^[a-z0-9][a-z0-9!#            !preg_match('#^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*(?:\s*;[^\r\n]*)?$#i', $mediaType)
-^_.+*\x27-]*/[a-z0-9][a-z0-9!#            !preg_match('#^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*(?:\s*;[^\r\n]*)?$#i', $mediaType)
-^_.+*\x27-]*(?:\\s*;[^\\r\\n]*)?$~i',
+                '~^[a-z0-9][a-z0-9!#$&^_.+*\\x27-]*/[a-z0-9][a-z0-9!#$&^_.+*\\x27-]*(?:\\s*;[^\\r\\n]*)?$~i',
                 $mediaType
             )
         ) {
