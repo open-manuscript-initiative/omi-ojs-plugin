@@ -36,7 +36,7 @@ foreach ([
     'authorizeServiceRequest',
     'reviewAssignmentExternalId',
     'reviewRound',
-    'REVIEW_ASSIGNMENT_STATUS_COMPLETE',
+    'reviewAssignmentAllowsFileWrite',
     'SUBMISSION_FILE_REVIEW_ATTACHMENT',
     'ASSOC_TYPE_REVIEW_ASSIGNMENT',
 ] as $required) {
@@ -59,6 +59,13 @@ foreach ([
 check(
     !str_contains($authorMethod, 'Repo::submissionFile()->edit('),
     'Author revision writeback must not replace an existing source file.'
+);
+check(
+    str_contains($source, 'ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_COMPLETE') &&
+    str_contains($source, 'ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_THANKED') &&
+    str_contains($source, 'ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_CANCELLED') &&
+    str_contains($source, 'ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_DECLINED'),
+    'Reviewer writeback must mirror native OJS non-writable assignment statuses.'
 );
 check(
     str_contains($source, 'Repo::submissionFile()->add('),
