@@ -34,6 +34,7 @@ jobs:
       - name: Check out the plugin
         uses: actions/checkout@v4
 
+      # The organization allowlist must include this composite action and its referenced sub-actions.
       - name: Prepare OJS test environment
         uses: pkp/pkp-github-actions@v1
         with:
