@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,16 +17,18 @@ concurrency:
 jobs:
   ojs-integration:
     name: OJS ${{ matrix.pkp-ref }} integration
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - pkp-ref: 3_5_0-4
+          - application: ojs
+            pkp-ref: 3_5_0-4
             php-version: 8.3
             database: mysql
-          - pkp-ref: 3_5_0-5
+          - application: ojs
+            pkp-ref: 3_5_0-5
             php-version: 8.3
             database: mysql
 
@@ -33,6 +36,7 @@ jobs:
       - name: Check out the plugin
         uses: actions/checkout@v4
 
+      # The organization allowlist must include this composite action and its referenced sub-actions.
       - name: Prepare OJS test environment
         uses: pkp/pkp-github-actions@v1
         with:
