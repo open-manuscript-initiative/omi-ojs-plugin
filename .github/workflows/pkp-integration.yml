@@ -1,0 +1,37 @@
+name: PKP OJS compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkp-ojs-compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ojs-integration:
+    name: OJS ${{ matrix.pkp-ref }} integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pkp-ref: 3_5_0-4
+          - pkp-ref: 3_5_0-5
+
+    steps:
+      - name: Run plugin against OJS
+        uses: pkp/pkp-github-actions@v1
+        with:
+          application: ojs
+          branch: ${{ matrix.pkp-ref }}
+          repository: pkp
+          node_version: 20
+          plugin: true
+          database: mysql
