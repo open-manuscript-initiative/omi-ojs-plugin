@@ -6,21 +6,21 @@ php <<'PHP'
 
 require 'tools/bootstrap.php';
 
-// The PKP CLI bootstrap creates the application request and loads all generic
+// The PKP CLI bootstrap creates the application request and loads generic
 // plugins from this OJS checkout, including the plugin copied in by the PKP CI action.
-new \\PKP\\cliTool\\CommandLineTool(['omi-plugin-compatibility-smoke']);
+new \PKP\cliTool\CommandLineTool(['omi-plugin-compatibility-smoke']);
 
-$pluginClass = \\APP\\plugins\\generic\\studioIntegration\\StudioIntegrationPlugin::class;
+$pluginClass = \APP\plugins\generic\studioIntegration\StudioIntegrationPlugin::class;
 $plugin = null;
 
-foreach (\\PKP\\plugins\\PluginRegistry::getPlugins('generic') as $candidate) {
+foreach (\PKP\plugins\PluginRegistry::getPlugins('generic') as $candidate) {
     if ($candidate instanceof $pluginClass) {
         $plugin = $candidate;
         break;
     }
 }
 
-if (!$plugin instanceof $pluginClass) {
+if (!($plugin instanceof $pluginClass)) {
     throw new RuntimeException('OJS did not discover and register the OMI Studio plugin.');
 }
 
@@ -30,8 +30,8 @@ if ($plugin->getPluginPath() !== $expectedPluginPath) {
 }
 
 $pluginFiles = [
-    'StudioIntegrationApiHandler.php' => \\APP\\plugins\\generic\\studioIntegration\\StudioIntegrationApiHandler::class,
-    'StudioIntegrationApiController.php' => \\APP\\plugins\\generic\\studioIntegration\\StudioIntegrationApiController::class,
+    'StudioIntegrationApiHandler.php' => \APP\plugins\generic\studioIntegration\StudioIntegrationApiHandler::class,
+    'StudioIntegrationApiController.php' => \APP\plugins\generic\studioIntegration\StudioIntegrationApiController::class,
 ];
 
 foreach ($pluginFiles as $file => $className) {
@@ -45,5 +45,5 @@ foreach ($pluginFiles as $file => $className) {
     }
 }
 
-echo "OJS discovered the plugin and loaded its integration classes successfully.\\n";
+echo "OJS discovered the plugin and loaded its integration classes successfully.\n";
 PHP
