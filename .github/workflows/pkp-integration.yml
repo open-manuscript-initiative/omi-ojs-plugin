@@ -26,12 +26,25 @@ jobs:
           - pkp-ref: 3_5_0-5
 
     steps:
-      - name: Run plugin against OJS
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+
+      - name: Prepare OJS test environment
         uses: pkp/pkp-github-actions@v1
         with:
           application: ojs
           branch: ${{ matrix.pkp-ref }}
           repository: pkp
           node_version: 20
-          plugin: true
           database: mysql
+
+      - name: Load the plugin in OJS
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_dir="$HOME/ojs"
+          plugin_dir="$app_dir/plugins/generic/studioIntegration"
+          mkdir -p "$plugin_dir"
+          rsync -a --exclude='.git/' --exclude='pkp-github-actions/' "$GITHUB_WORKSPACE"/ "$plugin_dir"/
+          cd "$app_dir"
+          bash "$plugin_dir/.github/actions/tests.sh"
