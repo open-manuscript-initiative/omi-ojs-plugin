@@ -1,0 +1,53 @@
+name: PKP OJS compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkp-ojs-compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ojs-integration:
+    name: OJS ${{ matrix.pkp-ref }} integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pkp-ref: 3_5_0-4
+            php-version: 8.3
+            database: mysql
+          - pkp-ref: 3_5_0-5
+            php-version: 8.3
+            database: mysql
+
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+
+      - name: Prepare OJS test environment
+        uses: pkp/pkp-github-actions@v1
+        with:
+          application: ojs
+          branch: ${{ matrix.pkp-ref }}
+          repository: pkp
+          node_version: 20
+
+      - name: Load the plugin in OJS
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_dir="$HOME/ojs"
+          plugin_dir="$app_dir/plugins/generic/studioIntegration"
+          mkdir -p "$plugin_dir"
+          rsync -a --exclude='.git/' --exclude='pkp-github-actions/' "$GITHUB_WORKSPACE"/ "$plugin_dir"/
+          cd "$app_dir"
+          bash "$plugin_dir/.github/actions/tests.sh"
