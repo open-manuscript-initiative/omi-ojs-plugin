@@ -6,6 +6,20 @@ php <<'PHP'
 
 require 'tools/bootstrap.php';
 
+// Check the actual checkout so a floating/wrong PKP ref cannot produce green
+// evidence labelled as a different supported release.
+$expectedTag = getenv('PKP_EXPECTED_VERSION');
+if (!$expectedTag) {
+    throw new RuntimeException('PKP_EXPECTED_VERSION must name the tested release tag.');
+}
+$expectedVersion = str_replace(['_', '-'], '.', $expectedTag);
+$actualVersion = (string)simplexml_load_file('dbscripts/xml/version.xml')->release;
+if ($actualVersion !== $expectedVersion) {
+    throw new RuntimeException('PKP version mismatch: expected ' . $expectedVersion . ', got ' . $actualVersion);
+}
+echo 'Testing PKP release ' . $actualVersion . PHP_EOL;
+
+
 // The PKP CLI bootstrap creates the application request and loads generic
 // plugins from this OJS checkout, including the plugin copied in by the PKP CI action.
 new \PKP\cliTool\CommandLineTool(['omi-plugin-compatibility-smoke']);
