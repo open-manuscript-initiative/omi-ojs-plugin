@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — 2026-11-07
+
+- Extend installation CI to OJS 3.5.0-6 while retaining -4/-5.
+- Verify the actual checked-out PKP version before recording a compatibility smoke result.
+
+
 ## 1.6.0.0 — 2026-09-19
 
 - Add signed Studio → OJS reviewer-file writeback bound to the concrete native review assignment and external-review round.

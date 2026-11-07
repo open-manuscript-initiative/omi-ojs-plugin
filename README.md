@@ -222,3 +222,19 @@ See [Studio's direct submission guide](https://github.com/open-manuscript-initia
 for configuration, recovery and validation instructions. Real PKP 3.5 author-flow
 verification is required before production rollout; no production submissions
 were created while developing this endpoint.
+
+
+## PKP 3.5.0-6 compatibility
+
+The compatibility CI matrix now includes the official `3_5_0-6` tag alongside
+`3_5_0-4` and `3_5_0-5`. The smoke test verifies the actual application's
+`dbscripts/xml/version.xml` against the selected target before loading the
+plugin; a green job for another version cannot substitute for -6 evidence.
+
+The -6 source review covers PKP submission-API anonymization, contributor/ROR
+and ORCID changes, stricter context/file access and publication versioning.
+The adapter uses authorized repository objects and its own projections, not
+subclasses of the changed protected PKP schema mappers. See the
+[shared review](https://github.com/open-manuscript-initiative/open-manuscript-studio/blob/main/docs/pkp-3.5.0-6-review.md)
+and retain the per-version installation/workflow CI results. This matrix
+extension does not publish a new plugin package or certify production upgrades.
