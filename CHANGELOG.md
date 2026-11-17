@@ -1,3 +1,10 @@
+## 1.8.0.0 — 2026-11-17
+
+- Add `editor.metadata.reconcile` and the native authenticated metadata inspection/apply endpoint.
+- Merge only selected title/subtitle/abstract/keyword fields in an enabled metadata locale; preserve other locales and native contributor identities.
+- Recheck current-stage permissions, native publication edit permission, queued state, publication version and snapshot token under locks. Use native validation/edit and metadata-change notification.
+- Add public contributor projection and privacy filtering, pure metadata tests and controller rejection/race coverage. Live OJS acceptance remains required.
+
 # Changelog
 
 ## 1.7.0.0 — source preparation

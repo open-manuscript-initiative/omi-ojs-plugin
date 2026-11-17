@@ -82,6 +82,11 @@ final class Ojs35Adapter
         ];
     }
 
+    public function reconciliationKeywords(object $publication, string $primaryLocale): array
+    {
+        return $this->getPublicationKeywords($publication, $primaryLocale);
+    }
+
     public function mapContributors(object $submission): array
     {
         $publication = $this->getHydratedCurrentPublication($submission);

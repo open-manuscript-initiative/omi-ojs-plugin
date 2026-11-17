@@ -10,7 +10,7 @@ The plugin implements the **OMI Integration API v1 / OJS profile** (`omi-integra
 - **Plugin type:** PKP Generic Plugin
 - **OMI protocol:** `omi-integration/1`
 - **Profile:** `omi-integration/1/ojs`
-- **Current source version:** `1.7.0.0`
+- **Current source version:** `1.8.0.0`
 - **License:** GNU General Public License v3.0
 
 The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms, signed review writeback, direct author submissions, and editor-authenticated publication artifact transfer. Development on `main` may contain improvements that are newer than the latest published release.
@@ -248,3 +248,7 @@ Updated artifact clients send the inspected `expectedWorkflowToken`; a metadata
 or stage change rejects transfer with HTTP 409, including the locked persistence
 recheck. Older clients may omit the token. This is a read projection, not an
 editorial-decision, copyediting-file or proof-approval write API.
+
+## Selective metadata reconciliation
+
+Version 1.8 adds authenticated `omi-ojs-metadata/1` compare-and-apply for selected title, subtitle, abstract and keyword fields. It preserves other locales and checks native editorial permissions and snapshot freshness. Publication status, identifiers and contributor identities remain native OJS authority. See [metadata reconciliation](docs/metadata-reconciliation.md).
