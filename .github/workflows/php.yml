@@ -40,6 +40,11 @@ jobs:
       - name: Check HTML galley document safety
         run: php tests/html-galley-document.php
 
+      - name: Check direct plugin class loading without legacy index
+        run: |
+          php tests/plugin-class-loading.php
+          php tests/plugin-class-loading.php controller
+
       - name: Check editorial transfer contract
         run: php tests/html-galley-transfer.php
 
@@ -103,12 +108,20 @@ jobs:
           set -euo pipefail
           required=(
             index.php
+            bootstrap.php
             version.xml
             StudioIntegrationPlugin.php
             StudioIntegrationApiHandler.php
             StudioIntegrationApiController.php
+            classes/Adapters/Ojs35Adapter.php
+            classes/Core/Base64Url.php
+            classes/Core/LaunchToken.php
+            classes/Core/ApiResponse.php
+            classes/Core/HtmlGalleyDocument.php
             classes/Core/PublicationArtifactDocument.php
             classes/Core/WorkflowFileDocument.php
+            classes/Core/WorkflowSnapshot.php
+            classes/Core/MetadataReconciliation.php
           )
           for file in "${required[@]}"; do
             test -s "$file" || { echo "Missing or empty required file: $file" >&2; exit 1; }

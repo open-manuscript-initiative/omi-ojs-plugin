@@ -15,6 +15,8 @@ use PKP\plugins\Hook;
 use PKP\security\Role;
 use PKP\submission\reviewAssignment\ReviewAssignment;
 
+require_once __DIR__ . '/bootstrap.php';
+
 class StudioIntegrationPlugin extends GenericPlugin
 {
     private bool $assetsInjected = false;
