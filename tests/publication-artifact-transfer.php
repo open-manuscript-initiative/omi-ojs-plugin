@@ -1,7 +1,7 @@
 <?php
 /** Controller contract test with in-memory PKP repositories. Real OJS production acceptance remains required. */
 namespace Illuminate\Http {
-    class JsonResponse { public function __construct(public array $data, public int $status = 200) {} }
+    class JsonResponse { public function __construct(public array $data, public int $status = 200) {} public function header($key, $value) { return $this; } }
     class Request { public function __construct(public array $data) {} public function validate($rules) { return $this->data; } }
 }
 namespace PKP\core { class PKPBaseController {} }
@@ -73,6 +73,7 @@ namespace Illuminate\Support\Facades {
     }
 }
 namespace {
+    require_once __DIR__ . '/../classes/Core/WorkflowSnapshot.php';
     const WORKFLOW_STAGE_ID_PRODUCTION = 5;
 
     class HttpFailure extends \RuntimeException {}
@@ -306,8 +307,12 @@ namespace {
     check($inspect->data['provenance']['required'] === true, 'Inspection did not require provenance');
     check(count($inspect->data['formats']) === 4, 'Inspection did not advertise publication formats');
     check(!State::$files, 'Inspection wrote files');
+    $workflow = $controller->workflowStatus(new \Illuminate\Http\Request(['submissionId' => 12]));
+    check($workflow->data['authority'] === 'OJS', 'Workflow must identify OJS authority');
+    check($workflow->data['stateToken'] === $inspect->data['workflowToken'], 'Inspection and workflow must agree');
 
     $htmlBody = bodyFor('html', $html, 'article.html', 'text/html;charset=utf-8');
+    $htmlBody['expectedWorkflowToken'] = $inspect->data['workflowToken'];
     $first = $send($htmlBody);
     check($first->data['provenanceVerified'] === true, 'HTML provenance was not verified');
     check($first->data['published'] === false, 'Transfer published HTML');
@@ -351,12 +356,16 @@ namespace {
         [409, fn() => State::$rows['publications'][13]->data['status'] = 3],
         [409, fn() => State::$rows['submissions'][12]->data['currentPublicationId'] = 14],
         [409, fn() => State::$race = fn() => State::$rows['publications'][13]->data['status'] = 3],
+        [409, fn() => State::$rows['publications'][13]->data['pages'] = '9-17'],
+        [409, fn() => State::$race = fn() => State::$rows['publications'][13]->data['pages'] = '9-17'],
         [422, fn() => State::$invalidFile = true],
     ] as [$status, $setup]) {
         State::reset();
+        $request = bodyFor('jats', $jats, 'article.jats.xml', 'application/xml');
+        $request['expectedWorkflowToken'] = \APP\plugins\generic\studioIntegration\classes\Core\WorkflowSnapshot::create(State::$rows['submissions'][12], State::$rows['publications'][13])['stateToken'];
         $setup();
         try {
-            $result = $send(bodyFor('jats', $jats, 'article.jats.xml', 'application/xml'));
+            $result = $send($request);
             if ($result->status === $status) continue;
             throw new \RuntimeException('Expected rejection ' . $status);
         } catch (HttpFailure $failure) {
@@ -364,6 +373,10 @@ namespace {
         }
         check(!State::$files && !State::$rows['galleys'] && !State::$rows['proofs'], 'Failed transfer left artifacts');
     }
+
+    State::reset();
+    State::$roles = [5 => [65536]];
+    check($controller->workflowStatus(new \Illuminate\Http\Request(['submissionId' => 12]))->status === 403, 'Reviewer must not read editorial workflow');
 
     echo "Publication artifact transfer contract checks passed\n";
 }
