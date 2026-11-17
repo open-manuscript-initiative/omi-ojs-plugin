@@ -1,6 +1,8 @@
 <?php
 namespace APP\plugins\generic\studioIntegration;
 
+require_once __DIR__ . '/bootstrap.php';
+
 use APP\core\Application;
 use APP\decision\Decision;
 use APP\facades\Repo;
@@ -616,7 +618,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.8.0',
+                'version' => '1.8.1',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),

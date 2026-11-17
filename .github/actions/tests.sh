@@ -43,6 +43,20 @@ if ($plugin->getPluginPath() !== $expectedPluginPath) {
     throw new RuntimeException('Unexpected OJS plugin path: ' . $plugin->getPluginPath());
 }
 
+// Do not preload helpers here: OJS must make them available through its own
+// modern namespaced plugin discovery path, without relying on index.php.
+$helperPrefix = '\\APP\\plugins\\generic\\studioIntegration\\classes\\';
+foreach ([
+    'Adapters\\Ojs35Adapter', 'Core\\Base64Url', 'Core\\LaunchToken',
+    'Core\\ApiResponse', 'Core\\HtmlGalleyDocument',
+    'Core\\PublicationArtifactDocument', 'Core\\WorkflowFileDocument',
+    'Core\\WorkflowSnapshot', 'Core\\MetadataReconciliation',
+] as $helperName) {
+    if (!class_exists($helperPrefix . $helperName)) {
+        throw new RuntimeException('OJS plugin discovery missed helper: ' . $helperName);
+    }
+}
+
 $pluginFiles = [
     'StudioIntegrationApiHandler.php' => \APP\plugins\generic\studioIntegration\StudioIntegrationApiHandler::class,
     'StudioIntegrationApiController.php' => \APP\plugins\generic\studioIntegration\StudioIntegrationApiController::class,

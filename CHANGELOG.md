@@ -1,11 +1,18 @@
+# Changelog
+
+## 1.8.1.0 — 2026-11-17
+
+- Fix the authenticated submission HTTP 500 (`Ojs35Adapter` class not found) when OJS directly instantiates the namespaced plugin without running the legacy `index.php` wrapper.
+- Load adapter and core helpers through a shared, idempotent bootstrap on plugin and API entry paths; keep legacy loading compatible.
+- Add a direct-loading regression that maps a submission and signs/verifies a launch token without preloading helpers. Extend native OJS compatibility and release/package checks to cover all required helper classes.
+- This addresses the reported missing-class exception. Production launch must still be retested after installing the new package; unrelated xmlConverter/funding asset and PageSpeed requests are separate issues.
+
 ## 1.8.0.0 — 2026-11-17
 
 - Add `editor.metadata.reconcile` and the native authenticated metadata inspection/apply endpoint.
 - Merge only selected title/subtitle/abstract/keyword fields in an enabled metadata locale; preserve other locales and native contributor identities.
 - Recheck current-stage permissions, native publication edit permission, queued state, publication version and snapshot token under locks. Use native validation/edit and metadata-change notification.
 - Add public contributor projection and privacy filtering, pure metadata tests and controller rejection/race coverage. Live OJS acceptance remains required.
-
-# Changelog
 
 ## 1.7.0.0 — source preparation
 
