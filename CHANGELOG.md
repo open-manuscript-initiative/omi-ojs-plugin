@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0.0 — source preparation
+
+- Add native editorial, submission-scoped workflow and selected-metadata inspection.
+- Bind publication artifact inspection to an optional workflow token and reject changed metadata/stages before and during locked transfer.
+- Preserve OJS decision/publication authority and existing client compatibility.
+- Add projection and controller regression tests; real OJS acceptance remains required.
+
 ## Unreleased — 2026-11-07
 
 - Extend installation CI to OJS 3.5.0-6 while retaining -4/-5.

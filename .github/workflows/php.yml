@@ -58,6 +58,9 @@ jobs:
       - name: Check publication artifact transfer contract
         run: php tests/publication-artifact-transfer.php
 
+      - name: Check editorial workflow projection
+        run: php tests/workflow-snapshot.php
+
       - name: Lint PHP sources
         shell: bash
         run: |

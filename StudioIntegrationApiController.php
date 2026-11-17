@@ -6,6 +6,7 @@ use APP\decision\Decision;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Ojs35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
+use APP\plugins\generic\studioIntegration\classes\Core\WorkflowSnapshot;
 use APP\plugins\generic\studioIntegration\classes\Core\HtmlGalleyDocument;
 use APP\plugins\generic\studioIntegration\classes\Core\PublicationArtifactDocument;
 use APP\plugins\generic\studioIntegration\classes\Core\WorkflowFileDocument;
@@ -49,6 +50,7 @@ class StudioIntegrationApiController extends PKPBaseController
     public function getGroupRoutes(): void
     {
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
+        Route::get('workflow-status', $this->workflowStatus(...))->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT])])->name('api.omiIntegration.workflowStatus');
         Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
         Route::get('contributors', $this->contributors(...))->name('api.omiIntegration.contributors');
@@ -75,6 +77,31 @@ class StudioIntegrationApiController extends PKPBaseController
     }
 
 
+    /** Read the current OJS editorial state using native, submission-scoped access. */
+    public function workflowStatus(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate(['submissionId' => 'required|integer|min:1']);
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('editor_required', 'An authenticated editorial user is required.', 403);
+        }
+        $submission = Repo::submission()->get((int)$data['submissionId']);
+        if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()) {
+            return $this->error('submission_not_found', 'Submission not found.', 404);
+        }
+        $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+        $allowed = false;
+        foreach ($stages as $roles) {
+            if (array_intersect($roles, [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT])) $allowed = true;
+        }
+        if (!$allowed) return $this->error('editor_required', 'Editorial access to this submission is required.', 403);
+        $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+        return response()->json(WorkflowSnapshot::create($submission, $publication))
+            ->header('Cache-Control', 'no-store');
+    }
+
     /**
      * Provenance-verified publication artifact transfer.
      *
@@ -96,6 +123,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'fileName' => 'required_if:action,transfer|string|max:255',
             'artifactBase64' => 'required_if:action,transfer|string|max:90000000',
             'build' => 'required_if:action,transfer|array',
+            'expectedWorkflowToken' => 'sometimes|string|size:64',
             'confirmed' => 'required_if:action,transfer|accepted',
         ]);
 
@@ -144,6 +172,9 @@ class StudioIntegrationApiController extends PKPBaseController
                     'Inspect the current unpublished production version before transferring a publication artifact.'
                 );
             }
+            if (isset($data['expectedWorkflowToken']) && !hash_equals(WorkflowSnapshot::create($submission, $publication)['stateToken'], (string)$data['expectedWorkflowToken'])) {
+                abort(409, 'OJS metadata or workflow state changed. Inspect the destination again.');
+            }
             return [$submission, $publication];
         };
 
@@ -180,6 +211,7 @@ class StudioIntegrationApiController extends PKPBaseController
                     'digest' => 'sha256',
                 ],
                 'published' => false,
+                'workflowToken' => WorkflowSnapshot::create($submission, $publication)['stateToken'],
             ]);
         }
 
@@ -523,12 +555,13 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.6.0',
+                'version' => '1.7.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
             'capabilities' => [
                 'launch',
+                'editor.workflow.read',
                 'metadata.read',
                 'contributors.read',
                 'reviewers.read',
