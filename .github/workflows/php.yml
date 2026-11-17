@@ -58,6 +58,9 @@ jobs:
       - name: Check publication artifact transfer contract
         run: php tests/publication-artifact-transfer.php
 
+      - name: Check selective metadata reconciliation
+        run: php tests/metadata-reconciliation.php
+
       - name: Check editorial workflow projection
         run: php tests/workflow-snapshot.php
 

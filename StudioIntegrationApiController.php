@@ -7,6 +7,8 @@ use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Ojs35Adapter;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use APP\plugins\generic\studioIntegration\classes\Core\WorkflowSnapshot;
+use APP\plugins\generic\studioIntegration\classes\Core\MetadataReconciliation;
+use PKP\observers\events\MetadataChanged;
 use APP\plugins\generic\studioIntegration\classes\Core\HtmlGalleyDocument;
 use APP\plugins\generic\studioIntegration\classes\Core\PublicationArtifactDocument;
 use APP\plugins\generic\studioIntegration\classes\Core\WorkflowFileDocument;
@@ -50,6 +52,7 @@ class StudioIntegrationApiController extends PKPBaseController
     public function getGroupRoutes(): void
     {
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
+        Route::post('metadata', $this->metadata(...))->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT])])->name('api.omiIntegration.metadata');
         Route::get('workflow-status', $this->workflowStatus(...))->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT])])->name('api.omiIntegration.workflowStatus');
         Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
@@ -76,6 +79,64 @@ class StudioIntegrationApiController extends PKPBaseController
             ])])->name('api.omiIntegration.publicationArtifact');
     }
 
+
+    /** Native editorial permissions, current publication and compare-and-apply semantics. */
+    public function metadata(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate([
+            'action' => 'required|in:inspect,apply', 'submissionId' => 'required|integer|min:1',
+            'publicationId' => 'required_if:action,apply|integer|min:1',
+            'locale' => 'required_if:action,apply|string|max:32',
+            'expectedStateToken' => 'required_if:action,apply|string|size:64',
+            'fields' => 'required_if:action,apply|array|min:1|max:4',
+            'confirmed' => 'required_if:action,apply|accepted',
+        ]);
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) return $this->error('editor_required', 'An authenticated editorial user is required.', 403);
+        $load = function () use ($data, $context, $user) {
+            $submission = Repo::submission()->get((int)$data['submissionId']);
+            if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()) abort(404, 'Submission not found.');
+            $stages = Repo::user()->getAccessibleWorkflowStages($user->getId(), $context->getId(), $submission);
+            $roles = $stages[(int)$submission->getData('stageId')] ?? [];
+            if (!array_intersect($roles, [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT])) abort(403, 'Editorial access to this submission stage is required.');
+            $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+            if (!$publication || (int)$publication->getData('submissionId') !== (int)$submission->getId()) abort(409, 'The current publication is unavailable.');
+            return [$submission, $publication];
+        };
+        [$submission, $publication] = $load();
+        $canWrite = fn($s, $p) => (int)$p->getData('status') === Submission::STATUS_QUEUED && Repo::submission()->canEditPublication($s->getId(), $user->getId());
+        $snapshot = function ($s, $p) use ($context, $canWrite) {
+            $adapter = new Ojs35Adapter();
+            return MetadataReconciliation::snapshot($s, $p, $context->getSupportedSubmissionMetadataLocales(), $adapter->reconciliationKeywords($p, (string)$s->getData('locale')), $adapter->mapContributors($s), $canWrite($s, $p));
+        };
+        if ($data['action'] === 'inspect') return response()->json(['snapshot' => $snapshot($submission, $publication)])->header('Cache-Control', 'no-store');
+        $result = DB::transaction(function () use ($data, $context, $load, $canWrite, $snapshot) {
+            DB::table('submissions')->where('submission_id', (int)$data['submissionId'])->lockForUpdate()->first();
+            DB::table('publications')->where('publication_id', (int)$data['publicationId'])->lockForUpdate()->first();
+            [$submission, $publication] = $load();
+            if (!$canWrite($submission, $publication)) abort(403, 'Native OJS metadata write permission on an unpublished publication is required.');
+            $current = $snapshot($submission, $publication);
+            if ((int)$data['publicationId'] !== (int)$publication->getId() || !hash_equals($current['stateToken'], (string)$data['expectedStateToken'])) abort(409, 'OJS metadata changed. Inspect and compare again.');
+            try { $params = MetadataReconciliation::patch($publication, (string)$data['locale'], (array)$data['fields'], $context->getSupportedSubmissionMetadataLocales(), $current['metadata']['keywords']); }
+            catch (\InvalidArgumentException $e) { abort(422, $e->getMessage()); }
+            $params['id'] = $publication->getId();
+            $params['submissionId'] = $submission->getId();
+            $errors = Repo::publication()->validate($publication, $params, $submission, $context);
+            if ($errors) abort(422, 'Native OJS metadata validation rejected the proposal.');
+            Repo::publication()->edit($publication, $params);
+            $updated = Repo::publication()->get($publication->getId());
+            return [
+                'snapshot' => $snapshot($submission, $updated),
+                'receipt' => ['protocol' => MetadataReconciliation::PROTOCOL, 'submissionId' => (int)$submission->getId(), 'publicationId' => (int)$publication->getId(), 'locale' => $data['locale'], 'fields' => array_keys($data['fields']), 'previousStateToken' => $current['stateToken'], 'published' => false],
+                'submission' => $submission,
+            ];
+        });
+        event(new MetadataChanged($result['submission']));
+        unset($result['submission']);
+        return response()->json($result)->header('Cache-Control', 'no-store');
+    }
 
     /** Read the current OJS editorial state using native, submission-scoped access. */
     public function workflowStatus(IlluminateRequest $input): JsonResponse
@@ -555,13 +616,14 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.7.0',
+                'version' => '1.8.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
             'capabilities' => [
                 'launch',
                 'editor.workflow.read',
+                'editor.metadata.reconcile',
                 'metadata.read',
                 'contributors.read',
                 'reviewers.read',

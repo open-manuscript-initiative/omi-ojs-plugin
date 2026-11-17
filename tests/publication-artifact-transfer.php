@@ -18,6 +18,13 @@ namespace APP\core {
 namespace APP\plugins\generic\studioIntegration {
     class StudioIntegrationPlugin { public function getEnabled($id) { return true; } }
 }
+namespace APP\plugins\generic\studioIntegration\classes\Adapters {
+    class Ojs35Adapter {
+        public function reconciliationKeywords($publication, $locale) { return \State::$keywords; }
+        public function mapContributors($submission) { return []; }
+    }
+}
+namespace PKP\observers\events { class MetadataChanged { public function __construct(public $submission) {} } }
 namespace PKP\plugins {
     class PluginRegistry {
         public static function getPlugin(...$args) {
@@ -74,6 +81,8 @@ namespace Illuminate\Support\Facades {
 }
 namespace {
     require_once __DIR__ . '/../classes/Core/WorkflowSnapshot.php';
+    require_once __DIR__ . '/../classes/Core/MetadataReconciliation.php';
+    function event($event) { State::$metadataEvents++; }
     const WORKFLOW_STAGE_ID_PRODUCTION = 5;
 
     class HttpFailure extends \RuntimeException {}
@@ -128,6 +137,7 @@ namespace {
             }
             return null;
         }
+        public function canEditPublication($submissionId, $userId) { return \State::$canEdit && $submissionId === 12 && $userId === 10; }
         public function newDataObject($data) { return new Record($data); }
         public function add($object) {
             $id = count(State::$rows[$this->table]) + 1;
@@ -135,7 +145,7 @@ namespace {
             State::$rows[$this->table][$id] = $object;
             return $id;
         }
-        public function edit($object, $data) { $object->data = array_merge($object->data, $data); }
+        public function edit($object, $data) { $object->data = array_merge($object->data, $data); if (isset($data['keywords'])) State::$keywords = $data['keywords']; }
         public function getSubmissionDir(...$args) { return 'journal/submission'; }
         public function validate(...$args) { return State::$invalidFile ? ['file' => 'invalid'] : []; }
     }
@@ -153,7 +163,11 @@ namespace {
         public static bool $reader = true, $invalidFile = false;
         public static $race = null;
 
+        public static bool $canEdit = true;
+        public static int $metadataEvents = 0;
+        public static array $keywords = ['hu' => ['kulcs'], 'en' => ['key']];
         public static function reset() {
+            self::$canEdit = true; self::$metadataEvents = 0; self::$keywords = ['hu' => ['kulcs'], 'en' => ['key']];
             self::$rows = [
                 'submissions' => [
                     12 => new Record([
@@ -168,6 +182,7 @@ namespace {
                     13 => new Record([
                         'id' => 13,
                         'status' => 1,
+                        'submissionId' => 12,
                         'title' => 'Minta',
                     ]),
                 ],
@@ -377,6 +392,35 @@ namespace {
     State::reset();
     State::$roles = [5 => [65536]];
     check($controller->workflowStatus(new \Illuminate\Http\Request(['submissionId' => 12]))->status === 403, 'Reviewer must not read editorial workflow');
+
+    State::reset();
+    State::$rows['publications'][13]->data['title'] = ['hu' => 'Régi', 'en' => 'Keep'];
+    $metadataInspect = fn() => $controller->metadata(new \Illuminate\Http\Request(['action' => 'inspect', 'submissionId' => 12]));
+    $proposal = fn($token) => ['action' => 'apply', 'submissionId' => 12, 'publicationId' => 13, 'locale' => 'hu', 'expectedStateToken' => $token, 'fields' => ['title' => 'Új', 'keywords' => ['új']], 'confirmed' => true];
+    $metadata = $metadataInspect()->data['snapshot'];
+    $applied = $controller->metadata(new \Illuminate\Http\Request($proposal($metadata['stateToken'])));
+    check($applied->data['snapshot']['metadata']['title']['hu'] === 'Új', 'Metadata title was not applied');
+    check(State::$rows['publications'][13]->data['title']['en'] === 'Keep', 'Metadata proposal overwrote another locale');
+    check(State::$keywords['en'] === ['key'], 'Keyword proposal overwrote another locale');
+    check(State::$metadataEvents === 1, 'Native metadata-change event was not emitted');
+    check($applied->data['receipt']['published'] === false, 'Metadata edit must not publish');
+    foreach ([
+        [403, function (&$body) { State::$canEdit = false; }],
+        [403, function (&$body) { State::$roles = [5 => [65536]]; }],
+        [404, function (&$body) { State::$rows['submissions'][12]->data['contextId'] = 2; }],
+        [409, function (&$body) { $body['publicationId'] = 99; }],
+        [409, function (&$body) { State::$race = fn() => State::$rows['publications'][13]->data['title'] = ['hu' => 'Concurrent']; }],
+        [422, function (&$body) { $body['fields'] = ['doi' => 'forged']; }],
+        [422, function (&$body) { $body['locale'] = 'de'; }],
+        [422, function (&$body) { State::$invalidFile = true; }],
+    ] as [$expected, $setup]) {
+        State::reset();
+        $body = $proposal($metadataInspect()->data['snapshot']['stateToken']);
+        $setup($body);
+        try { $controller->metadata(new \Illuminate\Http\Request($body)); throw new \RuntimeException('Metadata rejection missing'); }
+        catch (HttpFailure $error) { check($error->getCode() === $expected, 'Wrong metadata rejection status'); }
+        check(State::$metadataEvents === 0, 'Rejected proposal emitted a metadata event');
+    }
 
     echo "Publication artifact transfer contract checks passed\n";
 }
