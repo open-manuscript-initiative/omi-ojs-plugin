@@ -61,17 +61,34 @@ if (in_array($mode, ['install', 'install-candidate', 'upgrade'], true)) {
     } finally {
         unlink($uploaded);
     }
-    require_once $root . '/PackageIntegrity.php';
-    \APP\plugins\generic\studioIntegration\PackageIntegrity::assertComplete($root);
+    // The operator's known-good 1.6.0 predates our integrity descriptors and
+    // manifest. Do not require new-version files from that genuine old archive.
+    if ($mode !== 'install' || is_file($root . '/PackageIntegrity.php')) {
+        require_once $root . '/PackageIntegrity.php';
+        \APP\plugins\generic\studioIntegration\PackageIntegrity::assertComplete($root);
+    }
     $installed = $dao->getCurrentVersion('plugins.generic', 'studioIntegration');
     if (!$installed || $installed->compare($version) !== 0) throw new RuntimeException('Native installer did not record the installed plugin version');
-    foreach (file($root . '/PACKAGE-CONTENTS.sha256', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-        [$hash, $relative] = explode('  ', $line, 2);
-        if (!is_file($root . '/' . $relative) || !hash_equals($hash, hash_file('sha256', $root . '/' . $relative))) {
-            throw new RuntimeException('Native ' . $mode . ' changed or lost ' . $relative);
+    // Compare every installed file with the exact input archive, also when the
+    // baseline has no bundled manifest. Use the native extractor for both formats.
+    $extractor = new ReflectionMethod(\PKP\plugins\PluginHelper::class, 'extractPlugin');
+    $count = $extractor->invoke($helper, $package, basename($package), function (string $extracted) use ($root, $mode): int {
+        $count = 0;
+        $walk = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($extracted, FilesystemIterator::SKIP_DOTS));
+        foreach ($walk as $entry) {
+            if (!$entry->isFile()) continue;
+            $relative = substr($entry->getPathname(), strlen(rtrim($extracted, '/')) + 1);
+            $target = $root . '/' . $relative;
+            if (!is_file($target) || !hash_equals(hash_file('sha256', $entry->getPathname()), hash_file('sha256', $target))) {
+                throw new RuntimeException('Native ' . $mode . ' changed or lost ' . $relative);
+            }
+            if (fileowner($target) !== posix_geteuid()) throw new RuntimeException('Archive ownership leaked into installed file: ' . $relative);
+            $count++;
         }
-    }
-    echo 'Native ' . $mode . ' passed with version ' . $installed->getVersionString(false) . ' under UID ' . posix_geteuid() . ".\n";
+        return $count;
+    });
+    if ($count < 1) throw new RuntimeException('Empty native extraction inventory');
+    echo 'Native ' . $mode . ' passed with version ' . $installed->getVersionString(false) . ' (' . $count . ' files verified) under UID ' . posix_geteuid() . ".\n";
 } elseif ($mode === 'settings') {
     require_once $root . '/StudioIntegrationPlugin.php';
     // Plugin settings belong to a real journal, not a fictitious context_id=0

@@ -90,7 +90,11 @@ jobs:
           baseline="$package_dir/studioIntegration-ojs-3.5-v1.8.3.tar.gz"
           curl --fail --location --retry 3 'https://github.com/open-manuscript-initiative/omi-ojs-plugin/releases/download/v1.8.3/studioIntegration-ojs-3.5-v1.8.3.tar.gz' --output "$baseline"
           echo "b581e2289167665e1a4f2e73f81a244553213c774b14a84dc3b1cf9afdfb0f84  $baseline" | sha256sum --check
-          mapfile -t archives < <(find "$package_dir" -maxdepth 1 -name '*.tar.gz' ! -name '*v1.8.3.tar.gz' -type f)
+          known_good="$package_dir/studioIntegration-ojs-3.5-v1.6.0.tar.gz"
+          curl --fail --location --retry 3 'https://github.com/open-manuscript-initiative/omi-ojs-plugin/releases/download/v1.6.0/studioIntegration-ojs-3.5-v1.6.0.tar.gz' --output "$known_good"
+          # This hash matches the exact working archive supplied by the operator.
+          echo "db752d6ef57d5670cb13e4e75ce3450c3521da04474dc695bac36d1fb1d6b353  $known_good" | sha256sum --check
+          mapfile -t archives < <(find "$package_dir" -maxdepth 1 -name '*.tar.gz' ! -name '*v1.8.3.tar.gz' ! -name '*v1.6.0.tar.gz' -type f)
           test "${#archives[@]}" -eq 1
           # Keep test code outside the plugin directory: native upgrades delete it.
           cp .github/actions/native-lifecycle.php "$app_dir/omi-native-lifecycle.php"
@@ -100,7 +104,18 @@ jobs:
           sudo chown -R omi-plugin-test "$app_dir"
           chmod -R a+rX "$package_dir"
           cd "$app_dir"
-          for operation in initialize install upgrade settings permissions install-candidate; do
+          sudo -u omi-plugin-test env \
+            OMI_NATIVE_INSTALL_TEST=1 OMI_NATIVE_TEST_APP="$app_dir" \
+            php omi-native-lifecycle.php initialize
+          for start_archive in "$known_good" "$baseline"; do
+            for operation in install upgrade; do
+              sudo -u omi-plugin-test env \
+                OMI_NATIVE_INSTALL_TEST=1 OMI_NATIVE_TEST_APP="$app_dir" \
+                OMI_BASELINE_ARCHIVE="$start_archive" PKP_TEST_PACKAGE_ARCHIVE="${archives[0]}" \
+                php omi-native-lifecycle.php "$operation"
+            done
+          done
+          for operation in settings permissions install-candidate; do
             sudo -u omi-plugin-test env \
               OMI_NATIVE_INSTALL_TEST=1 OMI_NATIVE_TEST_APP="$app_dir" \
               OMI_BASELINE_ARCHIVE="$baseline" PKP_TEST_PACKAGE_ARCHIVE="${archives[0]}" \

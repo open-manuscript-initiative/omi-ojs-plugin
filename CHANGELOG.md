@@ -5,6 +5,7 @@
 - Load launch/API handler files relative to the plugin itself, independently of the PHP process working directory. Normalize asset URL separators while retaining the current OJS origin and installation path.
 - Exercise signed launch URLs on different domains, ports, installation subdirectories and native rewritten routes; retain submission authorization and configured Studio/installation identity.
 - Add native HTTP checks after non-root installation/upgrade, using two Host headers and root/nested web layouts. Check the public API, shipped JS/CSS and rejection of unsigned submission access on the OJS/PHP compatibility matrix.
+- Verify upgrades from the operator's exact working 1.6.0 archive as well as 1.8.3, comparing all installed bytes and PHP-account ownership even for old packages without a manifest.
 - Publish only the exact main commit that passed both PHP CI and native OJS compatibility. Do not replace an existing version's release assets with bytes from another commit.
 - These changes do not override operating-system copy denials or claim a repair of the operator's production filesystem.
 
