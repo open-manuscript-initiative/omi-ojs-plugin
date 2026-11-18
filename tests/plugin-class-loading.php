@@ -14,6 +14,7 @@ namespace {
     $prefix = 'APP\\plugins\\generic\\studioIntegration\\';
     foreach ([
         'classes\\Adapters\\Ojs35Adapter',
+        'classes\\Middleware\\EnsureCompleteInstallation',
         'classes\\Core\\Base64Url', 'classes\\Core\\LaunchToken',
         'classes\\Core\\ApiResponse', 'classes\\Core\\HtmlGalleyDocument',
         'classes\\Core\\PublicationArtifactDocument',

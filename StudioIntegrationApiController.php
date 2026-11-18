@@ -7,6 +7,7 @@ use APP\core\Application;
 use APP\decision\Decision;
 use APP\facades\Repo;
 use APP\plugins\generic\studioIntegration\classes\Adapters\Ojs35Adapter;
+use APP\plugins\generic\studioIntegration\classes\Middleware\EnsureCompleteInstallation;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use APP\plugins\generic\studioIntegration\classes\Core\WorkflowSnapshot;
 use APP\plugins\generic\studioIntegration\classes\Core\MetadataReconciliation;
@@ -48,18 +49,9 @@ class StudioIntegrationApiController extends PKPBaseController
 
     public function getRouteGroupMiddleware(): array
     {
-        return ['has.context', function (IlluminateRequest $request, \Closure $next) {
-            $error = method_exists($this->plugin, 'getInstallationError')
-                ? $this->plugin->getInstallationError()
-                : [
-                    'code' => 'PLUGIN_INSTALLATION_INCOMPLETE',
-                    'message' => 'The OJS integration plugin files are from different versions. Ask the OJS administrator to reinstall the complete release package.',
-                ];
-            if ($error) {
-                return response()->json(['error' => $error], 503);
-            }
-            return $next($request);
-        }];
+        // PKP inspects every route middleware as a string before dispatch.
+        // An inline Closure crashes DecodeApiTokenWithValidation even on public APIs.
+        return ['has.context', EnsureCompleteInstallation::class];
     }
 
     public function getGroupRoutes(): void
@@ -629,7 +621,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.8.5',
+                'version' => '1.8.6',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),

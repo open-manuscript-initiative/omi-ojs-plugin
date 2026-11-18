@@ -137,6 +137,7 @@ jobs:
             StudioIntegrationApiHandler.php
             StudioIntegrationApiController.php
             classes/Adapters/Ojs35Adapter.php
+            classes/Middleware/EnsureCompleteInstallation.php
             classes/Core/Base64Url.php
             classes/Core/LaunchToken.php
             classes/Core/ApiResponse.php
