@@ -37,6 +37,9 @@ jobs:
       - name: Show PHP version
         run: php --version
 
+      - name: Check launcher visibility and recovery
+        run: node tests/launcher-availability.cjs
+
       - name: Check HTML galley document safety
         run: php tests/html-galley-document.php
 

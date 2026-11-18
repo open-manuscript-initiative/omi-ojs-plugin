@@ -106,6 +106,7 @@ jobs:
           php tests/plugin-class-loading.php controller
           php tests/incomplete-installation.php
           php tests/incomplete-installation.php mixed
+          node tests/launcher-availability.cjs
 
       - name: Build installable archives
         id: package

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.5.0 — 2026-11-18
+
+- Keep the settings dialog renderable when installation is incomplete: show saved values with a localized warning instead of returning a non-HTML error object.
+- Block settings writes while incomplete, and render a standalone diagnostic if the settings class or template itself is missing.
+- Keep the Studio launcher visible with a localized explanation while installation is incomplete; disable navigation and restore normal launch after recovery.
+- Give the form an explicit native plugin-grid action and test real Smarty rendering and settings preservation in the non-root OJS lifecycle matrix.
+
 ## 1.8.4.0 — 2026-11-18
 
 - Return `PLUGIN_INSTALLATION_INCOMPLETE` / HTTP 503 before helper-dependent API calls or Studio launch when required files are missing, empty or unreadable; retain detailed failures in the administrator log.

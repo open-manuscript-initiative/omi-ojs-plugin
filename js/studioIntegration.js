@@ -1,9 +1,10 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.3.2';
+  var VERSION = '1.8.5';
   var GLOBAL_KEY = '__OMI_STUDIO_LAUNCHER__';
   var LAUNCHER_ID = 'omi-studio-launcher';
+  var NOTICE_ID = 'omi-studio-installation-notice';
 
   if (window[GLOBAL_KEY] && typeof window[GLOBAL_KEY].mount === 'function') {
     window[GLOBAL_KEY].mount();
@@ -56,6 +57,8 @@
   function removeLauncher() {
     var existing = getLauncher();
     if (existing) existing.remove();
+    var notice = document.getElementById(NOTICE_ID);
+    if (notice) notice.remove();
   }
 
   function createDirectLaunchUrl(config, submissionId) {
@@ -84,6 +87,19 @@
     button.setAttribute('aria-label', label);
     button.dataset.omiStudioLauncherVersion = VERSION;
     button.dataset.omiSubmissionId = submissionId;
+    button.dataset.omiInstallationError = config.installationError || '';
+
+    if (config.installationError) {
+      button.disabled = true;
+      button.classList.add('omi-studio-launcher--unavailable');
+      button.setAttribute('aria-describedby', NOTICE_ID);
+      var notice = document.createElement('div');
+      notice.id = NOTICE_ID;
+      notice.className = 'omi-studio-installation-notice';
+      notice.setAttribute('role', 'alert');
+      notice.textContent = config.installationError;
+      document.body.appendChild(notice);
+    }
 
     button.addEventListener('pointerdown', function (event) {
       event.stopPropagation();
@@ -120,7 +136,8 @@
 
     var existing = getLauncher();
     var existingMatches = isCurrentLauncher(existing) &&
-      existing.dataset.omiSubmissionId === submissionId;
+      existing.dataset.omiSubmissionId === submissionId &&
+      existing.dataset.omiInstallationError === (config.installationError || '');
 
     if (existingMatches) {
       lastSubmissionId = submissionId;
