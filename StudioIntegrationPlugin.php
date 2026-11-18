@@ -82,12 +82,24 @@ class StudioIntegrationPlugin extends GenericPlugin
         if ($request->getUserVar('verb') !== 'settings') {
             return parent::manage($args, $request);
         }
-        if ($error = $this->getInstallationError()) {
-            return new JSONMessage(false, ['error' => $error]);
+        $installationError = $this->getInstallationError();
+        if ($installationError && $request->getUserVar('save')) {
+            return new JSONMessage(false, $this->installationErrorHtml());
+        }
+        // Settings do not depend on manuscript adapters. Keep saved values
+        // visible when another runtime helper was lost during installation.
+        foreach (['classes/StudioIntegrationSettingsForm.php', 'templates/settingsForm.tpl'] as $file) {
+            $path = __DIR__ . '/' . $file;
+            if (!is_file($path) || !is_readable($path) || filesize($path) === 0) {
+                // AjaxModal requires renderable HTML, including on failure.
+                return new JSONMessage(true, $this->installationErrorHtml());
+            }
         }
         $context = $request->getContext();
         $contextId = $context ? $context->getId() : PKPApplication::SITE_CONTEXT_ID;
         $form = new StudioIntegrationSettingsForm($this, $contextId);
+        $form->setData('installationIncomplete', $installationError !== null);
+        $form->setData('installationErrorMessage', $installationError ? __('plugins.generic.studioIntegration.settings.installationIncomplete') : '');
         if ($request->getUserVar('save')) {
             $form->readInputData();
             if ($form->validate()) {
@@ -98,6 +110,13 @@ class StudioIntegrationPlugin extends GenericPlugin
             $form->initData();
         }
         return new JSONMessage(true, $form->fetch($request));
+    }
+
+    private function installationErrorHtml(): string
+    {
+        $message = htmlspecialchars(__('plugins.generic.studioIntegration.settings.installationIncomplete'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        return '<div class="pkp_notification" role="alert"><p>' . $message
+            . '</p><p><code>PLUGIN_INSTALLATION_INCOMPLETE</code></p></div>';
     }
 
     public function loadApiHandler(string $hookName, array $args): bool
@@ -140,9 +159,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             return false;
         }
 
-        if ($this->getInstallationError()) {
-            return false;
-        }
+        $installationError = $this->getInstallationError();
 
         $launchMode = $this->resolveLaunchMode(
             $request,
@@ -155,7 +172,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             return false;
         }
 
-        if ($launchMode !== 'review' && $this->ensureSharedSecret($contextId) === '') {
+        if (!$installationError && $launchMode !== 'review' && $this->ensureSharedSecret($contextId) === '') {
             return false;
         }
 
@@ -170,6 +187,7 @@ class StudioIntegrationPlugin extends GenericPlugin
         $config = json_encode([
             'launchEndpoint' => $launchEndpoint,
             'mode' => $launchMode,
+            'installationError' => $installationError ? __('plugins.generic.studioIntegration.settings.installationIncomplete') : null,
             'label' => $reviewerMode
                 ? __('plugins.generic.studioIntegration.openInStudioForReview')
                 : __('plugins.generic.studioIntegration.openInStudio'),
@@ -185,13 +203,13 @@ class StudioIntegrationPlugin extends GenericPlugin
             ['contexts' => ['backend']]
         );
         $templateMgr->addJavaScript(
-            'studioIntegrationLauncher132',
-            $pluginBase . '/js/studioIntegration.js?v=1.3.2',
+            'studioIntegrationLauncher185',
+            $pluginBase . '/js/studioIntegration.js?v=1.8.5',
             ['contexts' => ['backend']]
         );
         $templateMgr->addStyleSheet(
-            'studioIntegrationLauncher132',
-            $pluginBase . '/css/studioIntegration.css?v=1.3.2',
+            'studioIntegrationLauncher185',
+            $pluginBase . '/css/studioIntegration.css?v=1.8.5',
             ['contexts' => ['backend']]
         );
 

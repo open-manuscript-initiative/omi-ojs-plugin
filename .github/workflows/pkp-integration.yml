@@ -99,7 +99,7 @@ jobs:
           sudo chown -R omi-plugin-test "$app_dir"
           chmod -R a+rX "$package_dir"
           cd "$app_dir"
-          for operation in initialize install upgrade permissions install-candidate; do
+          for operation in initialize install upgrade settings permissions install-candidate; do
             sudo -u omi-plugin-test env \
               OMI_NATIVE_INSTALL_TEST=1 OMI_NATIVE_TEST_APP="$app_dir" \
               OMI_BASELINE_ARCHIVE="$baseline" PKP_TEST_PACKAGE_ARCHIVE="${archives[0]}" \

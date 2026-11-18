@@ -5,7 +5,7 @@ namespace PKP\plugins { class GenericPlugin {} }
 namespace PKP\core {
     class PKPBaseController {}
     class JSONMessage {
-        public function __construct(public bool $status, public array $content) {}
+        public function __construct(public bool $status, public string|array $content) {}
     }
 }
 namespace APP\handler { class Handler { public function __construct() {} } }
@@ -16,6 +16,7 @@ namespace Illuminate\Http {
     }
 }
 namespace {
+    function __(string $key): string { return '<Restore the complete plugin & check permissions>'; }
     function response(): object {
         return new class {
             public function json(array $data, int $status = 200): \Illuminate\Http\JsonResponse {
@@ -96,6 +97,19 @@ namespace {
             });
             verify(!$launch->status && http_response_code() === 503, 'Incomplete launch must not redirect or create an assertion');
             verify($launch->content['error']['code'] === 'PLUGIN_INSTALLATION_INCOMPLETE', 'Launch diagnostic must match API');
+            $blocked = $plugin->manage([], new class {
+                public function getUserVar(string $key): mixed { return $key === 'verb' ? 'settings' : '1'; }
+            });
+            verify(!$blocked->status && is_string($blocked->content), 'Blocked settings save must return HTML rather than an error object');
+            verify(str_contains($blocked->content, '&lt;Restore') && !str_contains($blocked->content, '<Restore'), 'Settings diagnostic must escape message HTML');
+            $settingsFile = $root . '/classes/StudioIntegrationSettingsForm.php';
+            $settingsBytes = file_get_contents($settingsFile);
+            unlink($settingsFile);
+            $fallback = $plugin->manage([], new class {
+                public function getUserVar(string $key): mixed { return $key === 'verb' ? 'settings' : null; }
+            });
+            verify($fallback->status && is_string($fallback->content) && str_contains($fallback->content, 'role="alert"'), 'Missing settings class must render a non-empty modal diagnostic');
+            file_put_contents($settingsFile, $settingsBytes);
             file_put_contents($adapter, $bytes);
         }
         $description = file_get_contents($log);

@@ -40,3 +40,6 @@ msgstr "Lebensdauer des Starttokens in Sekunden (60–3600)"
 
 msgid "plugins.generic.studioIntegration.settings.invalidUrl"
 msgstr "Geben Sie eine gültige Studio-URL ein."
+
+msgid "plugins.generic.studioIntegration.settings.installationIncomplete"
+msgstr "Die Plugin-Installation ist unvollständig oder einige Dateien sind nicht lesbar. Gespeicherte Einstellungen bleiben erhalten. Das Speichern ist deaktiviert, bis das vollständige Plugin-Paket und die Dateiberechtigungen wiederhergestellt sind."

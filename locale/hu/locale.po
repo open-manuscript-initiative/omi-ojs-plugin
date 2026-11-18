@@ -40,3 +40,6 @@ msgstr "Indítótoken élettartama másodpercben (60–3600)"
 
 msgid "plugins.generic.studioIntegration.settings.invalidUrl"
 msgstr "Adj meg érvényes Studio URL-t."
+
+msgid "plugins.generic.studioIntegration.settings.installationIncomplete"
+msgstr "A bővítmény telepítése hiányos, vagy egyes fájlok nem olvashatók. A mentett beállítások megmaradtak. A mentés a teljes csomag és a fájljogosultságok helyreállításáig nem érhető el."
