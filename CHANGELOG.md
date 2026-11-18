@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.3.0 — 2026-11-18
+
+- Add native OJS install and upgrade descriptors with a standalone required-file check before version success. Missing, empty or unreadable adapters/helpers now produce an explicit installation error.
+- Build ZIP and portable USTAR TAR.GZ deterministically from the same tracked-file inventory and include a per-file SHA-256 manifest.
+- Exercise PHP PharData extraction on PHP 8.2/8.3/8.4, missing/empty adapter rejection, and the actual PKP installer code-action dispatch. The external transfer/copy loss reported by the operator is not claimed reproduced.
+
+## 1.8.2.0 — 2026-11-18
+
+- Rebuild a complete installable package after a deployed/downloaded copy was reported to contain an empty `classes/Adapters` directory.
+- Validate the actual extracted ZIP and TAR.GZ, compare every helper PHP file with its source bytes, and run both direct-entry class-loading tests from each extracted package before publication.
+- Include `classes/Adapters/Ojs35Adapter.php` and the shared loader. This packaging repair does not change submission permissions or metadata behavior.
+
 ## 1.8.1.0 — 2026-11-17
 
 - Fix the authenticated submission HTTP 500 (`Ojs35Adapter` class not found) when OJS directly instantiates the namespaced plugin without running the legacy `index.php` wrapper.

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE install SYSTEM "../../../lib/pkp/dtd/install.dtd">
+<install>
+    <code file="plugins/generic/studioIntegration/PackageIntegrity.php" class="APP\plugins\generic\studioIntegration\PackageIntegrity" function="install" />
+</install>
