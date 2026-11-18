@@ -36,6 +36,11 @@ namespace {
         if (!is_dir(dirname($target))) mkdir(dirname($target), 0755, true);
         copy($file->getPathname(), $target);
     }
+    $mixed = ($argv[1] ?? '') === 'mixed';
+    if ($mixed) {
+        $entry = $root . '/StudioIntegrationPlugin.php';
+        file_put_contents($entry, str_replace('public function getInstallationError()', 'public function getLegacyInstallationError()', file_get_contents($entry)));
+    }
     // Exercise the real entry points against a separate installed-file fixture.
     require $root . '/StudioIntegrationPlugin.php';
     require $root . '/StudioIntegrationApiController.php';
@@ -53,6 +58,18 @@ namespace {
     $log = $root . '/error.log';
     ini_set('error_log', $log);
     try {
+        if ($mixed) {
+            $response = $guard($request, $next);
+            verify($response->status === 503 && $calls === 0, 'Mixed-version API must stop before calling a missing plugin method');
+            verify($response->data['error']['code'] === 'PLUGIN_INSTALLATION_INCOMPLETE', 'Mixed-version API diagnostic required');
+            $handler = new \APP\plugins\generic\studioIntegration\StudioIntegrationApiHandler($plugin);
+            $launch = $handler->launch([], new class {
+                public function getUserVar(string $key): string { return $key === 'submissionId' ? '220' : '1'; }
+            });
+            verify(!$launch->status && http_response_code() === 503, 'Mixed-version launch must stop before calling a missing plugin method');
+            echo "Mixed-version installation API/launch checks passed.\n";
+            return;
+        }
         $guardFile = $root . '/PackageIntegrity.php';
         $guardBytes = file_get_contents($guardFile);
         // Test before the guard class has ever been loaded in this process.

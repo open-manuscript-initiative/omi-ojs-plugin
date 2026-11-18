@@ -49,7 +49,13 @@ class StudioIntegrationApiController extends PKPBaseController
     public function getRouteGroupMiddleware(): array
     {
         return ['has.context', function (IlluminateRequest $request, \Closure $next) {
-            if ($error = $this->plugin->getInstallationError()) {
+            $error = method_exists($this->plugin, 'getInstallationError')
+                ? $this->plugin->getInstallationError()
+                : [
+                    'code' => 'PLUGIN_INSTALLATION_INCOMPLETE',
+                    'message' => 'The OJS integration plugin files are from different versions. Ask the OJS administrator to reinstall the complete release package.',
+                ];
+            if ($error) {
                 return response()->json(['error' => $error], 503);
             }
             return $next($request);

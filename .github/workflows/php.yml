@@ -44,6 +44,7 @@ jobs:
         run: |
           php tests/package-integrity.php
           php tests/incomplete-installation.php
+          php tests/incomplete-installation.php mixed
 
       - name: Build and extract packages using native PHP
         shell: bash
