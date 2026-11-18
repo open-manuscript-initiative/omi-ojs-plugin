@@ -74,13 +74,29 @@ if (in_array($mode, ['install', 'install-candidate', 'upgrade'], true)) {
     echo 'Native ' . $mode . ' passed with version ' . $installed->getVersionString(false) . ' under UID ' . posix_geteuid() . ".\n";
 } elseif ($mode === 'settings') {
     require_once $root . '/StudioIntegrationPlugin.php';
+    // Plugin settings belong to a real journal, not a fictitious context_id=0
+    // (OJS 3.5 enforces a journal foreign key on plugin_settings).
+    $contextId = \Illuminate\Support\Facades\DB::table('journals')->insertGetId([
+        'path' => 'omi-settings-fixture', 'primary_locale' => 'en', 'enabled' => 1,
+    ], 'journal_id');
+    foreach (['supportedLocales', 'supportedFormLocales', 'supportedSubmissionLocales'] as $key) {
+        \Illuminate\Support\Facades\DB::table('journal_settings')->insert([
+            'journal_id' => $contextId, 'locale' => '', 'setting_name' => $key, 'setting_value' => json_encode(['en']),
+        ]);
+    }
+    $_SERVER['PATH_INFO'] = '/omi-settings-fixture/management/settings/website';
+    $request = \APP\core\Application::get()->getRequest();
+    $router = new \PKP\core\PKPPageRouter();
+    $router->setApplication(\APP\core\Application::get());
+    $router->setDispatcher(\APP\core\Application::get()->getDispatcher());
+    $request->setRouter($router);
+    if ($request->getContext()?->getId() !== $contextId) throw new RuntimeException('Settings fixture did not resolve its native journal context');
     $plugin = new \APP\plugins\generic\studioIntegration\StudioIntegrationPlugin();
-    $plugin->register('generic', 'plugins/generic/studioIntegration', 0);
+    $plugin->register('generic', 'plugins/generic/studioIntegration', $contextId);
     $values = ['studioUrl' => 'https://studio.example.invalid', 'installationId' => 'ci-installation', 'sharedSecret' => 'ci-only-settings-secret', 'tokenTtl' => 600];
-    foreach ($values as $key => $value) $plugin->updateSetting(0, $key, $value, $key === 'tokenTtl' ? 'int' : 'string');
+    foreach ($values as $key => $value) $plugin->updateSetting($contextId, $key, $value, $key === 'tokenTtl' ? 'int' : 'string');
     $snapshot = fn () => \Illuminate\Support\Facades\DB::table('plugin_settings')->where('plugin_name', $plugin->getName())->orderBy('setting_name')->get()->toJson();
     $before = $snapshot();
-    $request = \APP\core\Application::get()->getRequest();
     $vars =& $request->getUserVars();
     $vars['verb'] = 'settings';
     unset($vars['save']);
