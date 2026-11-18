@@ -94,6 +94,7 @@ jobs:
           test "${#archives[@]}" -eq 1
           # Keep test code outside the plugin directory: native upgrades delete it.
           cp .github/actions/native-lifecycle.php "$app_dir/omi-native-lifecycle.php"
+          cp .github/actions/http-portability.sh "$app_dir/omi-http-portability.sh"
           sudo useradd --system --no-create-home --shell /usr/sbin/nologin omi-plugin-test
           sudo chmod o+x "$HOME" "$RUNNER_TEMP"
           sudo chown -R omi-plugin-test "$app_dir"
@@ -105,3 +106,6 @@ jobs:
               OMI_BASELINE_ARCHIVE="$baseline" PKP_TEST_PACKAGE_ARCHIVE="${archives[0]}" \
               php omi-native-lifecycle.php "$operation"
           done
+          sudo -u omi-plugin-test env \
+            OMI_NATIVE_INSTALL_TEST=1 OMI_NATIVE_TEST_APP="$app_dir" \
+            bash omi-http-portability.sh

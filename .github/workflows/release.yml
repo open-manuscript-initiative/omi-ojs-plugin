@@ -1,11 +1,10 @@
 name: OJS Plugin Release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - version.xml
+  workflow_run:
+    workflows: [OJS Plugin CI, PKP OJS compatibility]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -14,21 +13,52 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 concurrency:
-  group: ojs-plugin-release-${{ github.ref }}-${{ inputs.version || github.ref_name }}
+  group: ojs-plugin-release-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
+  validation:
+    name: Require successful CI on the release commit
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Inspect PHP and native OJS results for this commit
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const gate = require(process.env.GITHUB_WORKSPACE + '/scripts/release-gate.cjs');
+            await gate({github, context, core, versionXml: fs.readFileSync('version.xml', 'utf8')});
+
   release:
     name: Build and publish OJS plugin
+    needs: validation
+    if: needs.validation.outputs.ready == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validation.outputs.sha }}
           fetch-depth: 0
 
       - name: Resolve and validate release version
@@ -107,6 +137,7 @@ jobs:
           php tests/incomplete-installation.php
           php tests/incomplete-installation.php mixed
           node tests/launcher-availability.cjs
+          php tests/portable-installation.php
 
       - name: Build installable archives
         id: package
@@ -162,7 +193,7 @@ jobs:
           else
             # A lightweight tag avoids requiring a configured Git author identity
             # on the ephemeral GitHub-hosted runner.
-            git tag "$TAG" "$GITHUB_SHA"
+            git tag "$TAG" HEAD
             git push origin "refs/tags/${TAG}"
           fi
 

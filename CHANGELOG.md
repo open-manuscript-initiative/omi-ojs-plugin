@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.7.0 — 2026-11-18
+
+- Load launch/API handler files relative to the plugin itself, independently of the PHP process working directory. Normalize asset URL separators while retaining the current OJS origin and installation path.
+- Exercise signed launch URLs on different domains, ports, installation subdirectories and native rewritten routes; retain submission authorization and configured Studio/installation identity.
+- Add native HTTP checks after non-root installation/upgrade, using two Host headers and root/nested web layouts. Check the public API, shipped JS/CSS and rejection of unsigned submission access on the OJS/PHP compatibility matrix.
+- Publish only the exact main commit that passed both PHP CI and native OJS compatibility. Do not replace an existing version's release assets with bytes from another commit.
+- These changes do not override operating-system copy denials or claim a repair of the operator's production filesystem.
+
 ## 1.8.6.0 — 2026-11-18
 
 - Replace the inline installation-check middleware with an autoloaded class name. OJS 3.5 inspects middleware as strings; the closure caused HTTP 500 in DecodeApiTokenWithValidation before capabilities or submission endpoints could run.
