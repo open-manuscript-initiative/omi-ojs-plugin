@@ -57,6 +57,57 @@ foreach ([
     }
 }
 
+// Exercise the real native Installer code action for both descriptors, without
+// running database migrations or changing the test journal's installed version.
+$nativeInstaller = (new ReflectionClass(\APP\install\Install::class))->newInstanceWithoutConstructor();
+foreach (['install.xml', 'upgrade.xml'] as $descriptor) {
+    $xml = simplexml_load_file($plugin->getPluginPath() . '/' . $descriptor);
+    $attributes = [];
+    foreach ($xml->code->attributes() as $key => $value) $attributes[$key] = (string)$value;
+    if (!$nativeInstaller->executeAction(['type' => 'code', 'file' => $attributes['file'], 'attr' => $attributes])) {
+        throw new RuntimeException('Native installer rejected complete package: ' . $descriptor);
+    }
+}
+
+// Exercise native PluginHelper extraction and FileManager copying as well as
+// the standalone archive checks. No production/database version is modified.
+$roundTripRoot = sys_get_temp_dir() . '/omi-pkp-package-' . bin2hex(random_bytes(8));
+mkdir($roundTripRoot);
+$fileManager = new \PKP\file\FileManager();
+try {
+    $tarPath = $roundTripRoot . '/studioIntegration.tar';
+    $archive = new PharData($tarPath);
+    $sourceRoot = $plugin->getPluginPath();
+    $sourceFiles = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceRoot, FilesystemIterator::SKIP_DOTS));
+    foreach ($sourceFiles as $entry) {
+        $relative = substr($entry->getPathname(), strlen($sourceRoot) + 1);
+        if ($entry->isFile() && !str_starts_with($relative, '.')) {
+            $archive->addFile($entry->getPathname(), 'studioIntegration/' . $relative);
+        }
+    }
+    $archive->compress(Phar::GZ);
+    unset($archive);
+    $extractor = new ReflectionMethod(\PKP\plugins\PluginHelper::class, 'extractPlugin');
+    $extractor->invoke(new \PKP\plugins\PluginHelper(), $tarPath . '.gz', 'studioIntegration.tar.gz', function (string $extracted) use ($fileManager, $roundTripRoot, $sourceRoot): void {
+        $copied = $roundTripRoot . '/installed';
+        if (!$fileManager->copyDir($extracted, $copied)) throw new RuntimeException('Native plugin copy failed');
+        \APP\plugins\generic\studioIntegration\PackageIntegrity::assertComplete($copied);
+        $adapter = '/classes/Adapters/Ojs35Adapter.php';
+        if (hash_file('sha256', $sourceRoot . $adapter) !== hash_file('sha256', $copied . $adapter)) {
+            throw new RuntimeException('Native installation changed adapter bytes');
+        }
+        unlink($copied . $adapter);
+        try {
+            \APP\plugins\generic\studioIntegration\PackageIntegrity::assertComplete($copied);
+            throw new LogicException('Incomplete native copy was accepted');
+        } catch (RuntimeException $e) {
+            if (!str_contains($e->getMessage(), 'classes/Adapters/Ojs35Adapter.php')) throw $e;
+        }
+    });
+} finally {
+    $fileManager->rmtree($roundTripRoot);
+}
+
 $pluginFiles = [
     'StudioIntegrationApiHandler.php' => \APP\plugins\generic\studioIntegration\StudioIntegrationApiHandler::class,
     'StudioIntegrationApiController.php' => \APP\plugins\generic\studioIntegration\StudioIntegrationApiController::class,

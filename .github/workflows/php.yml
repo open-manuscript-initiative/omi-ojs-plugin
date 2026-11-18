@@ -40,6 +40,20 @@ jobs:
       - name: Check HTML galley document safety
         run: php tests/html-galley-document.php
 
+      - name: Check installation and upgrade integrity guards
+        run: php tests/package-integrity.php
+
+      - name: Build and extract packages using native PHP
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(mktemp -d)"
+          trap 'rm -rf "$target"' EXIT
+          python3 scripts/build-package.py "$target"
+          for archive in "$target"/*.tar.gz "$target"/*.zip; do
+            php tests/package-extraction.php "$archive"
+          done
+
       - name: Check direct plugin class loading without legacy index
         run: |
           php tests/plugin-class-loading.php
@@ -109,6 +123,9 @@ jobs:
           required=(
             index.php
             bootstrap.php
+            PackageIntegrity.php
+            install.xml
+            upgrade.xml
             version.xml
             StudioIntegrationPlugin.php
             StudioIntegrationApiHandler.php

@@ -79,6 +79,9 @@ jobs:
           required=(
             index.php
             bootstrap.php
+            PackageIntegrity.php
+            install.xml
+            upgrade.xml
             version.xml
             StudioIntegrationPlugin.php
             StudioIntegrationApiHandler.php
@@ -112,23 +115,7 @@ jobs:
           set -euo pipefail
 
           PACKAGE="studioIntegration-ojs-3.5-${TAG}"
-          rm -rf dist
-          mkdir -p dist/studioIntegration
-
-          rsync -a ./ dist/studioIntegration/ \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            --exclude='dist/' \
-            --exclude='*.log' \
-            --exclude='*.sqlite' \
-            --exclude='*.sqlite3'
-
-          (
-            cd dist
-            zip -q -r "${PACKAGE}.zip" studioIntegration
-            tar -czf "${PACKAGE}.tar.gz" studioIntegration
-            sha256sum "${PACKAGE}.zip" "${PACKAGE}.tar.gz" > SHA256SUMS.txt
-          )
+          python3 scripts/build-package.py dist
 
           echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
 
@@ -141,6 +128,8 @@ jobs:
           unzip -l "dist/${PACKAGE}.zip" | grep -F 'studioIntegration/version.xml'
           tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F 'studioIntegration/version.xml'
           test -s dist/SHA256SUMS.txt
+          php tests/package-extraction.php "dist/${PACKAGE}.tar.gz"
+          php tests/package-extraction.php "dist/${PACKAGE}.zip"
           # Test shipped bytes, not just the checkout. A package with a missing
           # adapter/helper must never pass merely because version.xml exists.
           extracted="$(mktemp -d)"
