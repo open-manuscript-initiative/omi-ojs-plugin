@@ -41,7 +41,10 @@ jobs:
         run: php tests/html-galley-document.php
 
       - name: Check installation and upgrade integrity guards
-        run: php tests/package-integrity.php
+        run: |
+          php tests/package-integrity.php
+          php tests/incomplete-installation.php
+          php tests/incomplete-installation.php mixed
 
       - name: Build and extract packages using native PHP
         shell: bash

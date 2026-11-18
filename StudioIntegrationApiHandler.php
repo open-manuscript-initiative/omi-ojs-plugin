@@ -37,6 +37,17 @@ class StudioIntegrationApiHandler extends Handler
             ]);
         }
 
+        $error = method_exists($this->plugin, 'getInstallationError')
+            ? $this->plugin->getInstallationError()
+            : [
+                'code' => 'PLUGIN_INSTALLATION_INCOMPLETE',
+                'message' => 'The OJS integration plugin files are from different versions. Ask the OJS administrator to reinstall the complete release package.',
+            ];
+        if ($error) {
+            http_response_code(503);
+            return new JSONMessage(false, ['error' => $error]);
+        }
+
         $requestedMode = (string)$request->getUserVar('mode');
         $resolvedMode = $this->plugin->resolveLaunchMode($request, $requestedMode);
 

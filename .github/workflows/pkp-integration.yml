@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   ojs-integration:
-    name: OJS ${{ matrix.pkp-ref }} integration
+    name: OJS ${{ matrix.pkp-ref }} / PHP ${{ matrix.php-version }} integration
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -35,6 +35,10 @@ jobs:
             pkp-ref: 3_5_0-6
             php-version: 8.3
             database: mysql
+          - application: ojs
+            pkp-ref: 3_5_0-6
+            php-version: 8.4
+            database: mysql
 
     steps:
       - name: Check out the plugin
@@ -48,6 +52,13 @@ jobs:
           branch: ${{ matrix.pkp-ref }}
           repository: pkp
           node_version: 20
+
+      - name: Select PHP for the native installation lifecycle
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+          extensions: mbstring, xml, mysqli, pdo_mysql, intl, gd, zip
 
       - name: Load the plugin in OJS
         env:
@@ -67,3 +78,30 @@ jobs:
           rsync -a --exclude='.git/' --exclude='pkp-github-actions/' --exclude='dist/' "$GITHUB_WORKSPACE"/ "$plugin_dir"/
           cd "$app_dir"
           bash "$plugin_dir/.github/actions/tests.sh"
+
+      - name: Install and upgrade as a separate unprivileged PHP user
+        env:
+          PKP_EXPECTED_VERSION: ${{ matrix.pkp-ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_dir="$HOME/ojs"
+          package_dir="$RUNNER_TEMP/omi-native-package"
+          baseline="$package_dir/studioIntegration-ojs-3.5-v1.8.3.tar.gz"
+          curl --fail --location --retry 3 'https://github.com/open-manuscript-initiative/omi-ojs-plugin/releases/download/v1.8.3/studioIntegration-ojs-3.5-v1.8.3.tar.gz' --output "$baseline"
+          echo "b581e2289167665e1a4f2e73f81a244553213c774b14a84dc3b1cf9afdfb0f84  $baseline" | sha256sum --check
+          mapfile -t archives < <(find "$package_dir" -maxdepth 1 -name '*.tar.gz' ! -name '*v1.8.3.tar.gz' -type f)
+          test "${#archives[@]}" -eq 1
+          # Keep test code outside the plugin directory: native upgrades delete it.
+          cp .github/actions/native-lifecycle.php "$app_dir/omi-native-lifecycle.php"
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin omi-plugin-test
+          sudo chmod o+x "$HOME" "$RUNNER_TEMP"
+          sudo chown -R omi-plugin-test "$app_dir"
+          chmod -R a+rX "$package_dir"
+          cd "$app_dir"
+          for operation in initialize install upgrade permissions install-candidate; do
+            sudo -u omi-plugin-test env \
+              OMI_NATIVE_INSTALL_TEST=1 OMI_NATIVE_TEST_APP="$app_dir" \
+              OMI_BASELINE_ARCHIVE="$baseline" PKP_TEST_PACKAGE_ARCHIVE="${archives[0]}" \
+              php omi-native-lifecycle.php "$operation"
+          done
