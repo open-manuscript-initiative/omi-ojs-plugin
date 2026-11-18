@@ -42,4 +42,4 @@ msgid "plugins.generic.studioIntegration.settings.invalidUrl"
 msgstr "Enter a valid Studio URL."
 
 msgid "plugins.generic.studioIntegration.settings.installationIncomplete"
-msgstr "The plugin installation is incomplete or some files are unreadable. Saved settings are retained. Saving is disabled until the complete plugin package is restored and file permissions are corrected."
+msgstr "The plugin installation is incomplete or some files are unreadable. This check does not delete saved settings. Saving is disabled until the complete plugin package is restored and file permissions are corrected."

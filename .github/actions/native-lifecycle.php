@@ -107,7 +107,8 @@ if (in_array($mode, ['install', 'install-candidate', 'upgrade'], true)) {
         @$dom->loadHTML($html);
         $xpath = new DOMXPath($dom);
         foreach ($values as $key => $value) {
-            $input = $xpath->query('//input[@id="' . $key . '"]')->item(0);
+            // Native FBV adds a random suffix to ids; field names are stable.
+            $input = $xpath->query('//input[@name="' . $key . '"]')->item(0);
             if (!$input || $input->getAttribute('value') !== (string)$value) throw new RuntimeException('Saved settings field missing or changed: ' . $key);
             if ($input->hasAttribute('disabled') !== $incomplete) throw new RuntimeException('Incorrect settings editability: ' . $key);
         }
