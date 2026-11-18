@@ -54,12 +54,12 @@ for layout in root nested; do
   php -S 127.0.0.1:18765 -t "$document_root" >"$fixture/server.log" 2>&1 &
   server_pid=$!
   if ! python3 - "$prefix" "$host" <<'PY'
-import json, pathlib, sys, time, urllib.error, urllib.request, xml.etree.ElementTree as ET
+import base64, hashlib, hmac, json, pathlib, sys, time, urllib.error, urllib.request, xml.etree.ElementTree as ET
 prefix, host = sys.argv[1:]
 plugin = pathlib.Path('plugins/generic/studioIntegration')
 expected_version = ET.parse(plugin / 'version.xml').findtext('release').removesuffix('.0')
-def get(path):
-    request = urllib.request.Request('http://127.0.0.1:18765' + prefix + path, headers={'Host': host})
+def get(path, headers=None):
+    request = urllib.request.Request('http://127.0.0.1:18765' + prefix + path, headers={'Host': host, **(headers or {})})
     return urllib.request.urlopen(request, timeout=15)
 for attempt in range(40):
     try:
@@ -85,7 +85,25 @@ except urllib.error.HTTPError as error:
     assert error.code == 401, (error.code, error.read())
 else:
     raise AssertionError('Unsigned submission access must remain forbidden')
-print('Native HTTP API, static assets and protected submission route passed: ' + host + prefix)
+# Exercise the exact adapter-dependent route behind the operator's original
+# class-not-found HTTP 500. A signed nonexistent fixture ID must reach the
+# native repository and return 404, without creating or reading a manuscript.
+now = int(time.time())
+claims = {'protocol': 'omi-integration/1', 'context': {'externalId': body['context']['externalId']},
+          'submission': {'externalId': '2147483647'}, 'scope': ['metadata.read'],
+          'iat': now, 'exp': now + 300}
+encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b'=').decode('ascii')
+payload = encode(json.dumps(claims, separators=(',', ':')).encode())
+signature = encode(hmac.new(b'ci-only-settings-secret', payload.encode('ascii'), hashlib.sha256).digest())
+try:
+    get('/index.php/omi-settings-fixture/api/v1/omi-integration/submission',
+        {'Authorization': 'OMI ' + payload + '.' + signature})
+except urllib.error.HTTPError as error:
+    detail = json.load(error)
+    assert error.code == 404 and detail['error']['code'] == 'submission_not_found', (error.code, detail)
+else:
+    raise AssertionError('Nonexistent signed fixture submission must return native 404')
+print('Native HTTP API, exact assets, unsigned rejection and signed adapter lookup passed: ' + host + prefix)
 PY
   then
     tail -n 70 "$fixture/server.log"

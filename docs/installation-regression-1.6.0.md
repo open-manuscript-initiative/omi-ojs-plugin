@@ -29,3 +29,5 @@ An earlier production log reports `Permission denied` while native OJS `FileMana
 The native lifecycle matrix independently installs the unmodified 1.6.0 and 1.8.3 baselines and upgrades each to the candidate. It uses extensionless upload temporary files and a separate non-root account. Every installed file is compared with the native extraction of the original source archive; this also works for the 1.6.0 baseline, which has no integrity manifest.
 
 Settings/permission checks, a fresh candidate install and the root/nested HTTP checks follow. This verifies the previously missing 1.6.0 upgrade path under standard OJS permissions. It does not reproduce or claim to resolve the production copy denial, nor establish support for untested OJS release families.
+
+The HTTP test also sends a valid fixture HMAC assertion to the `submission` endpoint with a nonexistent submission ID. It must instantiate `Ojs35Adapter`, reach the native repository and return `submission_not_found` / 404. This specifically checks the code path behind the originally reported missing-adapter HTTP 500 without adding a manuscript or bypassing unsigned-request rejection.
