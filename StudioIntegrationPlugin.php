@@ -25,16 +25,19 @@ class StudioIntegrationPlugin extends GenericPlugin
     public function getInstallationError(): ?array
     {
         $guard = __DIR__ . '/PackageIntegrity.php';
-        if (is_readable($guard)) {
-            require_once $guard;
+        if (is_file($guard) && is_readable($guard) && filesize($guard) > 0) {
             try {
+                require_once $guard;
+                if (!class_exists(PackageIntegrity::class, false)) {
+                    throw new \RuntimeException('OMI plugin installation check could not be loaded: PackageIntegrity.php');
+                }
                 PackageIntegrity::assertComplete(__DIR__);
                 return null;
-            } catch (\RuntimeException $e) {
+            } catch (\Throwable $e) {
                 error_log($e->getMessage());
             }
         } else {
-            error_log('OMI plugin installation check is missing or unreadable: PackageIntegrity.php');
+            error_log('OMI plugin installation check is missing, empty or unreadable: PackageIntegrity.php');
         }
         // Filesystem paths and permission details belong in the administrator log.
         return [

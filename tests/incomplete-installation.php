@@ -53,6 +53,14 @@ namespace {
     $log = $root . '/error.log';
     ini_set('error_log', $log);
     try {
+        $guardFile = $root . '/PackageIntegrity.php';
+        $guardBytes = file_get_contents($guardFile);
+        // Test before the guard class has ever been loaded in this process.
+        file_put_contents($guardFile, '');
+        verify($plugin->getInstallationError() !== null, 'Empty guard must not cause a class-not-found fatal');
+        unlink($guardFile);
+        verify($plugin->getInstallationError() !== null, 'Missing guard must remain diagnosable');
+        file_put_contents($guardFile, $guardBytes);
         verify($plugin->getInstallationError() === null, 'Complete package must be healthy');
         verify($guard($request, $next)->status === 200 && $calls === 1, 'Healthy API must continue');
         // Read-only runtime files are valid; only an upgrade needs write access.

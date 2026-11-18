@@ -6,26 +6,60 @@ require 'tools/bootstrap.php';
 new \PKP\cliTool\CommandLineTool(['omi-native-install-fixture']);
 if (getenv('OMI_NATIVE_INSTALL_TEST') !== '1'
     || realpath('.') !== getenv('OMI_NATIVE_TEST_APP')
-    || \PKP\config\Config::getVar('database', 'name') !== 'ojs-ci'
     || !function_exists('posix_geteuid') || posix_geteuid() === 0) {
     throw new RuntimeException('Run only as a non-root user in the explicitly configured disposable ojs-ci fixture.');
 }
-$root = getcwd() . '/plugins/generic/studioIntegration';
 $mode = $argv[1] ?? '';
+if ($mode === 'initialize') {
+    if (\PKP\config\Config::getVar('general', 'installed')) throw new RuntimeException('Refusing to reinitialize an installed OJS application');
+    // PKP's composite action creates an empty ojs-ci database and a template
+    // config. A plugin lifecycle test needs a genuinely installed OJS schema/site.
+    $installer = new class([
+        'locale' => 'en', 'additionalLocales' => ['en'],
+        'filesDir' => getcwd() . '/files', 'timeZone' => 'UTC',
+        'adminUsername' => 'omi_ci_admin', 'adminPassword' => 'Only-a-disposable-CI-fixture-123!',
+        'adminEmail' => 'omi-ci@example.invalid', 'databaseDriver' => 'mysqli',
+        'databaseHost' => 'localhost', 'databasePort' => 3306,
+        'databaseUsername' => 'ojs-ci', 'databasePassword' => 'ojs-ci', 'databaseName' => 'ojs-ci',
+        'oaiRepositoryId' => 'omi-ci.example.invalid', 'enableBeacon' => false,
+    ]) extends \APP\install\Install {
+        // External reference-data downloads do not participate in plugin install.
+        public function updateRorRegistryDataset(): bool { return true; }
+        public function downloadIPGeoDB(): bool { return true; }
+    };
+    if (!$installer->execute() || !$installer->wroteConfig()) {
+        throw new RuntimeException('Could not initialize disposable OJS: ' . $installer->getErrorString());
+    }
+    echo "Initialized disposable OJS schema and site as an unprivileged user.\n";
+    exit;
+}
+if (\PKP\config\Config::getVar('database', 'name') !== 'ojs-ci'
+    || !\PKP\config\Config::getVar('general', 'installed')) {
+    throw new RuntimeException('Lifecycle operations require the installed disposable ojs-ci database');
+}
+$root = getcwd() . '/plugins/generic/studioIntegration';
 $helper = new \PKP\plugins\PluginHelper();
 $manager = new \PKP\file\FileManager();
 $dao = \PKP\db\DAORegistry::getDAO('VersionDAO');
 $package = getenv($mode === 'install' ? 'OMI_BASELINE_ARCHIVE' : 'PKP_TEST_PACKAGE_ARCHIVE');
-if (in_array($mode, ['install', 'upgrade'], true)) {
+if (in_array($mode, ['install', 'install-candidate', 'upgrade'], true)) {
     if (!$package || !is_file($package)) throw new RuntimeException('Missing lifecycle test archive');
-    if ($mode === 'install') {
-        \Illuminate\Support\Facades\DB::table('versions')->where('product_type', 'plugins.generic')->where('product', 'studioIntegration')->delete();
-        $manager->rmtree($root);
-        if (is_dir($root)) throw new RuntimeException('Fixture plugin directory could not be removed');
-        $version = $helper->installPlugin($package, basename($package));
-    } else {
-        if (!$dao->getCurrentVersion('plugins.generic', 'studioIntegration')) throw new RuntimeException('Baseline plugin was not installed');
-        $version = $helper->upgradePlugin('generic', 'studioIntegration', $package, basename($package));
+    // Web uploads arrive as extensionless temporary files; exercise PKP's
+    // filename/extension normalization rather than passing an already named tar.
+    $uploaded = tempnam(sys_get_temp_dir(), 'omi-upload-');
+    if (!$uploaded || !copy($package, $uploaded)) throw new RuntimeException('Could not prepare upload fixture');
+    try {
+        if ($mode !== 'upgrade') {
+            \Illuminate\Support\Facades\DB::table('versions')->where('product_type', 'plugins.generic')->where('product', 'studioIntegration')->delete();
+            $manager->rmtree($root);
+            if (is_dir($root)) throw new RuntimeException('Fixture plugin directory could not be removed');
+            $version = $helper->installPlugin($uploaded, basename($package));
+        } else {
+            if (!$dao->getCurrentVersion('plugins.generic', 'studioIntegration')) throw new RuntimeException('Baseline plugin was not installed');
+            $version = $helper->upgradePlugin('generic', 'studioIntegration', $uploaded, basename($package));
+        }
+    } finally {
+        unlink($uploaded);
     }
     require_once $root . '/PackageIntegrity.php';
     \APP\plugins\generic\studioIntegration\PackageIntegrity::assertComplete($root);
@@ -80,5 +114,5 @@ if (in_array($mode, ['install', 'upgrade'], true)) {
         chmod($parent, $parentMode);
     }
 } else {
-    throw new InvalidArgumentException('Expected install, upgrade or permissions mode');
+    throw new InvalidArgumentException('Expected initialize, install, install-candidate, upgrade or permissions mode');
 }
