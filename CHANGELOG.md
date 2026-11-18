@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2.0 — 2026-11-18
+
+- Rebuild a complete installable package after a deployed/downloaded copy was reported to contain an empty `classes/Adapters` directory.
+- Validate the actual extracted ZIP and TAR.GZ, compare every helper PHP file with its source bytes, and run both direct-entry class-loading tests from each extracted package before publication.
+- Include `classes/Adapters/Ojs35Adapter.php` and the shared loader. This packaging repair does not change submission permissions or metadata behavior.
+
 ## 1.8.1.0 — 2026-11-17
 
 - Fix the authenticated submission HTTP 500 (`Ojs35Adapter` class not found) when OJS directly instantiates the namespaced plugin without running the legacy `index.php` wrapper.

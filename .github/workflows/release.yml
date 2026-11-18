@@ -141,6 +141,23 @@ jobs:
           unzip -l "dist/${PACKAGE}.zip" | grep -F 'studioIntegration/version.xml'
           tar -tzf "dist/${PACKAGE}.tar.gz" | grep -F 'studioIntegration/version.xml'
           test -s dist/SHA256SUMS.txt
+          # Test shipped bytes, not just the checkout. A package with a missing
+          # adapter/helper must never pass merely because version.xml exists.
+          extracted="$(mktemp -d)"
+          trap 'rm -rf "$extracted"' EXIT
+          mkdir -p "$extracted/zip" "$extracted/tar"
+          unzip -q "dist/${PACKAGE}.zip" -d "$extracted/zip"
+          tar -xzf "dist/${PACKAGE}.tar.gz" -C "$extracted/tar"
+          for format in zip tar; do
+            root="$extracted/$format/studioIntegration"
+            cmp bootstrap.php "$root/bootstrap.php"
+            while IFS= read -r -d '' helper; do
+              test -s "$root/$helper"
+              cmp "$helper" "$root/$helper"
+            done < <(find classes -type f -name '*.php' -print0)
+            php "$root/tests/plugin-class-loading.php"
+            php "$root/tests/plugin-class-loading.php" controller
+          done
 
       - name: Create Git tag for release
         shell: bash
