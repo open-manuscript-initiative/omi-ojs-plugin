@@ -55,9 +55,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          package_dir="$RUNNER_TEMP/omi-native-package"
+          mkdir -p "$package_dir"
+          python3 scripts/build-package.py "$package_dir"
+          mapfile -t archives < <(find "$package_dir" -maxdepth 1 -name '*.tar.gz' -type f)
+          test "${#archives[@]}" -eq 1
+          export PKP_TEST_PACKAGE_ARCHIVE="${archives[0]}"
           app_dir="$HOME/ojs"
           plugin_dir="$app_dir/plugins/generic/studioIntegration"
           mkdir -p "$plugin_dir"
-          rsync -a --exclude='.git/' --exclude='pkp-github-actions/' "$GITHUB_WORKSPACE"/ "$plugin_dir"/
+          rsync -a --exclude='.git/' --exclude='pkp-github-actions/' --exclude='dist/' "$GITHUB_WORKSPACE"/ "$plugin_dir"/
           cd "$app_dir"
           bash "$plugin_dir/.github/actions/tests.sh"

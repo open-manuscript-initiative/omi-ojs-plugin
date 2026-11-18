@@ -75,23 +75,19 @@ $roundTripRoot = sys_get_temp_dir() . '/omi-pkp-package-' . bin2hex(random_bytes
 mkdir($roundTripRoot);
 $fileManager = new \PKP\file\FileManager();
 try {
-    $tarPath = $roundTripRoot . '/studioIntegration.tar';
-    $archive = new PharData($tarPath);
-    $sourceRoot = $plugin->getPluginPath();
-    $sourceFiles = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceRoot, FilesystemIterator::SKIP_DOTS));
-    foreach ($sourceFiles as $entry) {
-        $relative = substr($entry->getPathname(), strlen($sourceRoot) + 1);
-        if ($entry->isFile() && !str_starts_with($relative, '.')) {
-            $archive->addFile($entry->getPathname(), 'studioIntegration/' . $relative);
-        }
+    $archivePath = getenv('PKP_TEST_PACKAGE_ARCHIVE');
+    if (!$archivePath || !is_file($archivePath)) {
+        throw new RuntimeException('PKP_TEST_PACKAGE_ARCHIVE must identify the canonical release package');
     }
-    $archive->compress(Phar::GZ);
-    unset($archive);
+    $sourceRoot = $plugin->getPluginPath();
     $extractor = new ReflectionMethod(\PKP\plugins\PluginHelper::class, 'extractPlugin');
-    $extractor->invoke(new \PKP\plugins\PluginHelper(), $tarPath . '.gz', 'studioIntegration.tar.gz', function (string $extracted) use ($fileManager, $roundTripRoot, $sourceRoot): void {
+    $extractor->invoke(new \PKP\plugins\PluginHelper(), $archivePath, basename($archivePath), function (string $extracted) use ($fileManager, $roundTripRoot, $sourceRoot): void {
+        // Verify the same canonical archive tested/published by release CI.
+        \APP\plugins\generic\studioIntegration\PackageIntegrity::assertComplete($extracted);
         $copied = $roundTripRoot . '/installed';
         if (!$fileManager->copyDir($extracted, $copied)) throw new RuntimeException('Native plugin copy failed');
         \APP\plugins\generic\studioIntegration\PackageIntegrity::assertComplete($copied);
+        echo "Native PKP extraction/copy preserved the complete release package.\n";
         $adapter = '/classes/Adapters/Ojs35Adapter.php';
         if (hash_file('sha256', $sourceRoot . $adapter) !== hash_file('sha256', $copied . $adapter)) {
             throw new RuntimeException('Native installation changed adapter bytes');
