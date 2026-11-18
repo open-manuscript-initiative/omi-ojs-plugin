@@ -42,8 +42,10 @@ for layout in root nested; do
   php -S 127.0.0.1:18765 -t "$document_root" >"$fixture/server.log" 2>&1 &
   server_pid=$!
   if ! python3 - "$prefix" "$host" <<'PY'
-import json, sys, time, urllib.error, urllib.request
+import json, pathlib, sys, time, urllib.error, urllib.request, xml.etree.ElementTree as ET
 prefix, host = sys.argv[1:]
+plugin = pathlib.Path('plugins/generic/studioIntegration')
+expected_version = ET.parse(plugin / 'version.xml').findtext('release').removesuffix('.0')
 def get(path):
     request = urllib.request.Request('http://127.0.0.1:18765' + prefix + path, headers={'Host': host})
     return urllib.request.urlopen(request, timeout=15)
@@ -59,11 +61,12 @@ with get('/index.php/omi-settings-fixture/api/v1/omi-integration') as response:
     assert response.status == 200
     body = json.load(response)
 assert body['protocol'] == 'omi-integration/1', body
+assert body['implementation']['version'] == expected_version, body
 assert body['context']['path'] == 'omi-settings-fixture', body
 assert 'launch' in body['capabilities'], body
 for asset in ['js/studioIntegration.js', 'css/studioIntegration.css']:
     with get('/plugins/generic/studioIntegration/' + asset) as response:
-        assert response.status == 200 and len(response.read()) > 100
+        assert response.status == 200 and response.read() == (plugin / asset).read_bytes()
 try:
     get('/index.php/omi-settings-fixture/api/v1/omi-integration/submission')
 except urllib.error.HTTPError as error:
