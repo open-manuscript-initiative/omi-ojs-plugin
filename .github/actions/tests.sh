@@ -47,7 +47,8 @@ if ($plugin->getPluginPath() !== $expectedPluginPath) {
 // modern namespaced plugin discovery path, without relying on index.php.
 $helperPrefix = '\\APP\\plugins\\generic\\studioIntegration\\classes\\';
 foreach ([
-    'Adapters\\Ojs35Adapter', 'Core\\Base64Url', 'Core\\LaunchToken',
+    'Adapters\\Ojs35Adapter', 'Middleware\\EnsureCompleteInstallation',
+    'Core\\Base64Url', 'Core\\LaunchToken',
     'Core\\ApiResponse', 'Core\\HtmlGalleyDocument',
     'Core\\PublicationArtifactDocument', 'Core\\WorkflowFileDocument',
     'Core\\WorkflowSnapshot', 'Core\\MetadataReconciliation',
@@ -119,6 +120,31 @@ foreach ($pluginFiles as $file => $className) {
         throw new RuntimeException('PKP could not load integration class: ' . $className);
     }
 }
+
+// Exercise the actual PKP string-only middleware inspector on a routed request.
+$controller = new \APP\plugins\generic\studioIntegration\StudioIntegrationApiController($plugin);
+$router = app('router');
+$router->group(['prefix' => '__omi_middleware_regression', 'middleware' => $controller->getRouteGroupMiddleware()], function () use ($router): void {
+    $router->get('probe', static fn () => response()->json(['ok' => true]));
+});
+$request = \Illuminate\Http\Request::create('/__omi_middleware_regression/probe', 'GET');
+$inspector = new class {
+    use \PKP\middleware\traits\HasRequiredMiddleware;
+    public function requiredMiddleware(): array { return [\PKP\middleware\HasContext::class]; }
+};
+if (!$inspector->hasRequiredMiddleware($request)) {
+    throw new RuntimeException('Native PKP middleware inspection lost the journal context requirement');
+}
+$guard = app()->make(\APP\plugins\generic\studioIntegration\classes\Middleware\EnsureCompleteInstallation::class);
+$passed = false;
+$result = $guard->handle($request, function ($request) use (&$passed) {
+    $passed = true;
+    return response()->json(['healthy' => true]);
+});
+if (!$passed || $result->getStatusCode() !== 200) {
+    throw new RuntimeException('Native registry/container middleware resolution rejected the complete plugin');
+}
+echo "Native PKP route middleware inspection and installation guard passed.\n";
 
 echo "OJS discovered the plugin and loaded its integration classes successfully.\n";
 PHP

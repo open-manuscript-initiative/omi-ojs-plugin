@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.6.0 — 2026-11-18
+
+- Replace the inline installation-check middleware with an autoloaded class name. OJS 3.5 inspects middleware as strings; the closure caused HTTP 500 in DecodeApiTokenWithValidation before capabilities or submission endpoints could run.
+- Preserve native context middleware and fail-closed incomplete/mixed-installation HTTP 503 responses, without changing signed-assertion or submission scopes.
+- Add regression coverage for string-only middleware inspection and native PKP middleware discovery; require the new guard in installation/package integrity checks.
+
 ## 1.8.5.0 — 2026-11-18
 
 - Keep the settings dialog renderable when installation is incomplete: show saved values with a localized warning instead of returning a non-HTML error object.

@@ -10,6 +10,7 @@ final class PackageIntegrity
         'StudioIntegrationApiHandler.php', 'StudioIntegrationApiController.php',
         'classes/StudioIntegrationSettingsForm.php',
         'classes/Adapters/Ojs35Adapter.php',
+        'classes/Middleware/EnsureCompleteInstallation.php',
         'classes/Core/Base64Url.php', 'classes/Core/LaunchToken.php',
         'classes/Core/ApiResponse.php', 'classes/Core/HtmlGalleyDocument.php',
         'classes/Core/PublicationArtifactDocument.php',

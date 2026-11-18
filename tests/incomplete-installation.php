@@ -1,7 +1,16 @@
 <?php
 declare(strict_types=1);
 
-namespace PKP\plugins { class GenericPlugin {} }
+namespace PKP\plugins {
+    class GenericPlugin {}
+    class PluginRegistry {
+        public static ?object $plugin = null;
+        public static function getPlugin(string $category, string $name): ?object {
+            if ($category !== 'generic' || $name !== 'studiointegrationplugin') throw new \RuntimeException('Unexpected plugin lookup');
+            return self::$plugin;
+        }
+    }
+}
 namespace PKP\core {
     class PKPBaseController {}
     class JSONMessage {
@@ -47,13 +56,19 @@ namespace {
     require $root . '/StudioIntegrationApiController.php';
     require $root . '/StudioIntegrationApiHandler.php';
     $plugin = new \APP\plugins\generic\studioIntegration\StudioIntegrationPlugin();
+    \PKP\plugins\PluginRegistry::$plugin = $plugin;
     $controller = new \APP\plugins\generic\studioIntegration\StudioIntegrationApiController($plugin);
     $middleware = $controller->getRouteGroupMiddleware();
     verify($middleware[0] === 'has.context', 'Native context middleware must remain');
-    $guard = $middleware[1];
+    // PKP HasRequiredMiddleware maps route middleware through a string callback.
+    array_map(static fn(string $name): string => $name, $middleware);
+    $guard = [new $middleware[1](), 'handle'];
     $request = new \Illuminate\Http\Request();
     $calls = 0;
     $next = function ($request) use (&$calls) { $calls++; return response()->json(['healthy' => true]); };
+    \PKP\plugins\PluginRegistry::$plugin = null;
+    verify($guard($request, $next)->status === 503 && $calls === 0, 'Missing registry entry must fail closed');
+    \PKP\plugins\PluginRegistry::$plugin = $plugin;
     $adapter = $root . '/classes/Adapters/Ojs35Adapter.php';
     $bytes = file_get_contents($adapter);
     $log = $root . '/error.log';

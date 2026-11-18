@@ -142,9 +142,16 @@ if (in_array($mode, ['install', 'install-candidate', 'upgrade'], true)) {
 } elseif ($mode === 'permissions') {
     require_once $root . '/StudioIntegrationPlugin.php';
     require_once $root . '/StudioIntegrationApiController.php';
-    $plugin = new \APP\plugins\generic\studioIntegration\StudioIntegrationPlugin();
+    $plugin = \PKP\plugins\PluginRegistry::getPlugin('generic', 'studiointegrationplugin');
+    if (!($plugin instanceof \APP\plugins\generic\studioIntegration\StudioIntegrationPlugin)) {
+        throw new RuntimeException('Native plugin registry did not discover the installed plugin');
+    }
     $controller = new \APP\plugins\generic\studioIntegration\StudioIntegrationApiController($plugin);
-    $middleware = $controller->getRouteGroupMiddleware()[1];
+    $middlewareName = $controller->getRouteGroupMiddleware()[1];
+    if (!is_string($middlewareName)) throw new RuntimeException('PKP middleware inspection requires a class name');
+    // Resolve the middleware through Laravel just as the API router does, then
+    // invoke handle rather than treating the class name as a global function.
+    $middleware = [app()->make($middlewareName), 'handle'];
     $request = \Illuminate\Http\Request::create('/');
     $calls = 0;
     $next = function ($request) use (&$calls) { $calls++; return response()->json(['ok' => true]); };
