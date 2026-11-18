@@ -38,7 +38,9 @@ jobs:
         run: php --version
 
       - name: Check launcher visibility and recovery
-        run: node tests/launcher-availability.cjs
+        run: |
+          node tests/launcher-availability.cjs
+          node tests/release-gate.cjs
 
       - name: Check HTML galley document safety
         run: php tests/html-galley-document.php
@@ -64,6 +66,9 @@ jobs:
         run: |
           php tests/plugin-class-loading.php
           php tests/plugin-class-loading.php controller
+
+      - name: Check installation path and domain independence
+        run: php tests/portable-installation.php
 
       - name: Check editorial transfer contract
         run: php tests/html-galley-transfer.php

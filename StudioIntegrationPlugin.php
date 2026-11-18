@@ -126,14 +126,14 @@ class StudioIntegrationPlugin extends GenericPlugin
         if ($page !== 'omiIntegration') {
             return false;
         }
-        require_once($this->getPluginPath() . '/StudioIntegrationApiHandler.php');
+        require_once __DIR__ . '/StudioIntegrationApiHandler.php';
         $handler = new StudioIntegrationApiHandler($this);
         return true;
     }
 
     public function registerApiController(string $hookName, APIRouter $apiRouter): bool
     {
-        require_once($this->getPluginPath() . '/StudioIntegrationApiController.php');
+        require_once __DIR__ . '/StudioIntegrationApiController.php';
         $apiRouter->registerPluginApiControllers([
             new StudioIntegrationApiController($this),
         ]);
@@ -177,7 +177,7 @@ class StudioIntegrationPlugin extends GenericPlugin
         }
 
         $templateMgr = $params[0];
-        $pluginBase = $request->getBaseUrl() . '/' . $this->getPluginPath();
+        $pluginBase = rtrim($request->getBaseUrl(), '/') . '/' . ltrim($this->getPluginPath(), '/');
         $launchEndpoint = $request->url(
             $context->getPath(),
             'omiIntegration',
