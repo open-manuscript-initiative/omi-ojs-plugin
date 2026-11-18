@@ -22,9 +22,21 @@ fixture="$(mktemp -d)"
 server_pid=''
 cleanup() {
   if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; fi
+  if [[ -f "$fixture/config.inc.php" ]]; then cp "$fixture/config.inc.php" config.inc.php; fi
   rm -rf "$fixture"
 }
 trap cleanup EXIT
+cp config.inc.php "$fixture/config.inc.php"
+python3 <<'PY'
+import pathlib, re
+config = pathlib.Path('config.inc.php')
+text, count = re.subn(r'(?m)^allowed_hosts\s*=.*$',
+    'allowed_hosts = \'["localhost", "127.0.0.1", "journal-a.example.invalid", "journal-b.example.invalid"]\'',
+    config.read_text())
+if count != 1:
+    raise RuntimeError('Expected exactly one allowed_hosts setting in the disposable test config')
+config.write_text(text)
+PY
 mkdir -p "$fixture/web/nested"
 ln -s "$PWD" "$fixture/web/nested/journals"
 
