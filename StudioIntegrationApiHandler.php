@@ -37,6 +37,11 @@ class StudioIntegrationApiHandler extends Handler
             ]);
         }
 
+        if ($error = $this->plugin->getInstallationError()) {
+            http_response_code(503);
+            return new JSONMessage(false, ['error' => $error]);
+        }
+
         $requestedMode = (string)$request->getUserVar('mode');
         $resolvedMode = $this->plugin->resolveLaunchMode($request, $requestedMode);
 

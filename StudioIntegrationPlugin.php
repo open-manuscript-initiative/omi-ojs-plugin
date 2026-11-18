@@ -21,6 +21,28 @@ class StudioIntegrationPlugin extends GenericPlugin
 {
     private bool $assetsInjected = false;
 
+    /** Check files before creating assertions or entering helper-dependent APIs. */
+    public function getInstallationError(): ?array
+    {
+        $guard = __DIR__ . '/PackageIntegrity.php';
+        if (is_readable($guard)) {
+            require_once $guard;
+            try {
+                PackageIntegrity::assertComplete(__DIR__);
+                return null;
+            } catch (\RuntimeException $e) {
+                error_log($e->getMessage());
+            }
+        } else {
+            error_log('OMI plugin installation check is missing or unreadable: PackageIntegrity.php');
+        }
+        // Filesystem paths and permission details belong in the administrator log.
+        return [
+            'code' => 'PLUGIN_INSTALLATION_INCOMPLETE',
+            'message' => 'The OJS integration plugin installation is incomplete or unreadable. Ask the OJS administrator to check plugin file permissions and reinstall the complete release package.',
+        ];
+    }
+
     public function register($category, $path, $mainContextId = null)
     {
         $success = parent::register($category, $path, $mainContextId);
@@ -56,6 +78,9 @@ class StudioIntegrationPlugin extends GenericPlugin
     {
         if ($request->getUserVar('verb') !== 'settings') {
             return parent::manage($args, $request);
+        }
+        if ($error = $this->getInstallationError()) {
+            return new JSONMessage(false, ['error' => $error]);
         }
         $context = $request->getContext();
         $contextId = $context ? $context->getId() : PKPApplication::SITE_CONTEXT_ID;
@@ -109,6 +134,10 @@ class StudioIntegrationPlugin extends GenericPlugin
 
         $requestedPage = $request->getRequestedPage();
         if (!in_array($requestedPage, ['workflow', 'dashboard', 'reviewer'], true)) {
+            return false;
+        }
+
+        if ($this->getInstallationError()) {
             return false;
         }
 

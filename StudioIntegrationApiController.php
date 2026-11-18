@@ -48,7 +48,12 @@ class StudioIntegrationApiController extends PKPBaseController
 
     public function getRouteGroupMiddleware(): array
     {
-        return ['has.context'];
+        return ['has.context', function (IlluminateRequest $request, \Closure $next) {
+            if ($error = $this->plugin->getInstallationError()) {
+                return response()->json(['error' => $error], 503);
+            }
+            return $next($request);
+        }];
     }
 
     public function getGroupRoutes(): void
@@ -618,7 +623,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.8.3',
+                'version' => '1.8.4',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),

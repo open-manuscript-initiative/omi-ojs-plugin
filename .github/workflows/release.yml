@@ -104,6 +104,7 @@ jobs:
         run: |
           php tests/plugin-class-loading.php
           php tests/plugin-class-loading.php controller
+          php tests/incomplete-installation.php
 
       - name: Build installable archives
         id: package

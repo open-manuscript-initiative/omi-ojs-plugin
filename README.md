@@ -10,7 +10,7 @@ The plugin implements the **OMI Integration API v1 / OJS profile** (`omi-integra
 - **Plugin type:** PKP Generic Plugin
 - **OMI protocol:** `omi-integration/1`
 - **Profile:** `omi-integration/1/ojs`
-- **Current source version:** `1.8.3.0`
+- **Current source version:** `1.8.4.0`
 - **License:** GNU General Public License v3.0
 
 The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms, signed review writeback, direct author submissions, and editor-authenticated publication artifact transfer. Development on `main` may contain improvements that are newer than the latest published release.
@@ -144,9 +144,19 @@ Use the published release package rather than a source-code ZIP when installing 
 7. Configure a stable installation ID for production use if required by the deployment.
 8. Use HTTPS in production.
 
-The installable archive has a top-level `studioIntegration/` directory, matching PKP plugin packaging expectations. Versions 1.8.3 and later include native `install.xml` and `upgrade.xml` checks: an incomplete copy (including an empty `classes/Adapters` directory) is rejected before OJS records a successful installation/upgrade. The error names the missing files. This does not repair an external copy failure; install the complete release archive and investigate filesystem permissions if copying still fails. OJS may remove files from a failed installation/upgrade; retain the normal plugin backup before upgrading.
+The installable archive has a top-level `studioIntegration/` directory, matching PKP plugin packaging expectations. Versions 1.8.3 and later include native `install.xml` and `upgrade.xml` checks. When OJS copies and executes these descriptors, an incomplete copy (including an empty `classes/Adapters` directory) is rejected before it records success. The error identifies missing, empty or unreadable files. If the descriptors themselves cannot be copied, the plugin cannot guarantee that OJS will run its guard. OJS may remove files from a failed installation/upgrade; retain the normal plugin backup before upgrading.
 
-Both ZIP and TAR.GZ are built from the same explicit tracked-file inventory. The release contains `PACKAGE-CONTENTS.sha256`; CI extracts both formats through PHP `PharData`, as OJS does, validates every listed file and tests missing/empty adapter rejection. The exact cause of the previously reported file loss was not reproducible from the separately inspected archives; the new guards prevent an incomplete native installation being reported as successful.
+Both ZIP and TAR.GZ are built from the same explicit tracked-file inventory. The release contains `PACKAGE-CONTENTS.sha256`; CI extracts both formats through PHP `PharData`, as OJS does, validates every listed file and tests missing/empty adapter rejection.
+
+### Hosting requirements and failed-copy diagnostics
+
+Installation uses the standard OJS plugin uploader; no domain name, absolute server path, Plesk command, root access or external PHP library is built into the plugin. During installation/upgrade, the PHP process must be able to write the generic-plugin parent directory and replace the existing plugin tree. Once installed, a complete read-only plugin tree is supported. Files must remain readable by PHP.
+
+An operator's installation log identified `FileManager.php` copy failures with `Permission denied`, including the adapter and installation descriptor. Archive completeness alone does not prevent a target-filesystem access denial. The plugin cannot grant itself filesystem privileges or repair ownership belonging to another operating-system user. The hosting administrator must provide the normal OJS plugin installation permissions; changes must be limited to the appropriate deployment account and directories, without world-writable permissions.
+
+From 1.8.4, a missing, empty or unreadable required helper stops Studio launch and the plugin API with `PLUGIN_INSTALLATION_INCOMPLETE` (HTTP 503). Detailed relative filenames and failure categories are written to the PHP administrator log; public responses do not expose installation paths. Repairing the files restores the integration without disabling read-only deployments. This check requires the plugin's entry files to be loadable; it cannot intercept failures in OJS discovery before the plugin runs.
+
+The compatibility workflow tests OJS 3.5.0-4/-5/-6 and additionally 3.5.0-6 with PHP 8.4. It invokes native `PluginHelper::installPlugin` on the pinned 1.8.3 release, then `upgradePlugin` on the candidate release, using a separate non-root OS account and the disposable `ojs-ci` database. It checks installed versions and all payload hashes, unreadable-adapter diagnostics, recovery and protected-directory copy denial. This is native CLI lifecycle coverage; it does not claim a production browser-upload test or support for untested OJS release families.
 
 ## Releases and verification
 

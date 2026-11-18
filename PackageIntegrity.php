@@ -26,15 +26,15 @@ final class PackageIntegrity
         foreach (self::REQUIRED_FILES as $relative) {
             $path = $root . '/' . $relative;
             clearstatcache(true, $path);
-            if (!is_file($path) || !is_readable($path) || filesize($path) === 0) {
-                $missing[] = $relative;
-            }
+            if (!is_file($path)) $missing[] = $relative . ' (missing)';
+            elseif (!is_readable($path)) $missing[] = $relative . ' (unreadable)';
+            elseif (filesize($path) === 0) $missing[] = $relative . ' (empty)';
         }
         if ($missing) {
             throw new \RuntimeException(
                 'OMI plugin package is incomplete. Missing, empty or unreadable: '
                 . implode(', ', $missing)
-                . '. Reinstall the complete studioIntegration release archive.'
+                . '. Check PHP read access and plugin-directory write permissions, then reinstall the complete studioIntegration release archive.'
             );
         }
     }

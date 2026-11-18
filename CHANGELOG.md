@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.4.0 — 2026-11-18
+
+- Return `PLUGIN_INSTALLATION_INCOMPLETE` / HTTP 503 before helper-dependent API calls or Studio launch when required files are missing, empty or unreadable; retain detailed failures in the administrator log.
+- Suppress broken launch buttons and show the diagnostic when plugin settings are opened. Keep complete read-only deployments working and recover automatically after files are restored.
+- Distinguish filesystem failure categories in native installation guards and explain host-independent PHP read/write requirements without site-specific paths or privilege changes.
+- Add real native fresh-install and upgrade lifecycle CI as a separate non-root OS account; verify all shipped hashes and recorded versions, test unreadable files and protected target directories, and include OJS 3.5.0-6 on PHP 8.4.
+
 ## 1.8.3.0 — 2026-11-18
 
 - Add native OJS install and upgrade descriptors with a standalone required-file check before version success. Missing, empty or unreadable adapters/helpers now produce an explicit installation error.
