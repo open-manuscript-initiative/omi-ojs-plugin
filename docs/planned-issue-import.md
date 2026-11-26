@@ -11,15 +11,38 @@ The manifest preserves issue title, description, volume, number, year, DOI, jour
 localized article metadata, submission/publication IDs, section IDs and order. It does not
 contain source binaries, reviewer records, or write grants. Responses are private/no-store.
 
-## Remaining end-to-end work (not implemented in this slice)
+## Signed source transfer (second slice)
+
+OJS now accepts an explicit issueId at the existing launch operation, instead of a
+submissionId. The new short-lived assertion has exactly the issue.import.read scope,
+contains an issue identifier rather than a submission identifier, and targets the
+dedicated Studio /integrations/ojs/issue-launch route. The Studio receiver is not
+implemented yet, so the OJS UI does not advertise this action yet.
+
+The signed read endpoints are relative to the existing OMI integration API base:
+
+- GET issue-import/manifest
+- GET issue-import/articles/{submissionId}
+- GET issue-import/articles/{submissionId}/files/{submissionFileId}/content
+
+Use Authorization: OMI payload.signature. The signed manifest uses the same builder as
+the authenticated native manifest. Every signed request verifies signature, expiration,
+installation, context, exact scope, current manager role and unpublished issue status.
+Article and binary requests also recheck current scheduled membership. The article
+response includes localized metadata, contributors, and eligible source descriptors
+in priority order: production-ready, copyedited, final, original submission.
+Only article-text DOCX files are eligible; review attachments and internal workflow
+files are excluded. The Studio must select the first available eligible source or
+report missing content. No write permissions are conveyed.
+
+## Remaining end-to-end work
 
 - Add a localized **Open issue in Studio** action in OJS Future Issues and issue TOC.
-- Define a short-lived, single-use issue launch assertion bound to installation, journal,
-  issue and editor; do not reuse a single-submission grant for bulk access. Revalidate
-  editorial privileges and current membership on every protected source-file request.
-- Select each article's approved copyedited/production source where available; preserve
-  the existing rich DOCX conversion for notes, tables and citations. Report missing or
-  unsupported files without silently creating empty articles.
+- Implement the dedicated Studio receiver and single-use nonce enforcement, with
+  bounded source downloads through the signed endpoints and strict origin validation.
+- Consume the ordered source descriptors and preserve the existing rich DOCX conversion
+  for notes, tables and citations. Report missing or unsupported files without silently
+  creating empty articles.
 - Build one periodical issue project in Studio, with separately editable articles and
   preserved journal sections, metadata and stable article-to-OJS identities. Do not
   concatenate submissions into a single article or grant reviewer access.
