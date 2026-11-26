@@ -43,3 +43,6 @@ msgstr "Adj meg érvényes Studio URL-t."
 
 msgid "plugins.generic.studioIntegration.settings.installationIncomplete"
 msgstr "A bővítmény telepítése hiányos, vagy egyes fájlok nem olvashatók. Ez az ellenőrzés nem törli a mentett beállításokat. A mentés a teljes csomag és a fájljogosultságok helyreállításáig nem érhető el."
+
+msgid "plugins.generic.studioIntegration.openIssueInStudio"
+msgstr "Teljes lapszám megnyitása a Stúdióban"
