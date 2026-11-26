@@ -88,6 +88,9 @@ jobs:
       - name: Check native planned issue launcher
         run: php tests/planned-issue-launcher.php
 
+      - name: Check planned issue artifact target contract
+        run: php tests/planned-issue-artifact-contract.php
+
       - name: Check planned issue transfer contract
         run: php tests/planned-issue-transfer-contract.php
 
