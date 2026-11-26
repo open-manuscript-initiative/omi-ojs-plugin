@@ -356,6 +356,57 @@ class StudioIntegrationPlugin extends GenericPlugin
         );
     }
 
+    /** Create a read-only assertion for one unpublished issue, not a submission grant. */
+    public function createIssueLaunchUrl($request, int $issueId): ?string
+    {
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || $issueId < 1 ||
+            !$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId())) {
+            return null;
+        }
+        $contextId = $context->getId();
+        $issue = Repo::issue()->get($issueId, $contextId);
+        if (!$issue || (int)$issue->getJournalId() !== (int)$contextId || $issue->getPublished()) {
+            return null;
+        }
+        $studioUrl = rtrim(trim((string)$this->getSetting($contextId, 'studioUrl')), '/');
+        $secret = $this->ensureSharedSecret($contextId);
+        if ($studioUrl === '' || $secret === '') return null;
+        $ttl = (int)$this->getSetting($contextId, 'tokenTtl');
+        if ($ttl < 60 || $ttl > 3600) $ttl = 300;
+        $now = time();
+        $claims = [
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/ojs',
+            'installationId' => $this->getInstallationId($contextId, $request),
+            'context' => [
+                'externalId' => (string)$contextId,
+                'type' => 'journal',
+                'path' => $context->getPath(),
+            ],
+            'issue' => ['externalId' => (string)$issueId],
+            'actor' => ['externalId' => (string)$user->getId()],
+            'actorMode' => 'editor',
+            'scope' => ['issue.import.read'],
+            'iat' => $now,
+            'exp' => $now + $ttl,
+            'nonce' => bin2hex(random_bytes(16)),
+            'externalBaseUrl' => $request->getBaseUrl(),
+            'apiBaseUrl' => $request->getDispatcher()->url(
+                $request, Application::ROUTE_API, $context->getPath(), 'omi-integration'
+            ),
+        ];
+        try {
+            $token = LaunchToken::issue($claims, $secret);
+        } catch (\Throwable) {
+            return null;
+        }
+        return $studioUrl . '/integrations/ojs/issue-launch?' . http_build_query(
+            $token, '', '&', PHP_QUERY_RFC3986
+        );
+    }
+
     public function createReviewerLaunchUrl($request, int $submissionId): ?string
     {
         $context = $request->getContext();
