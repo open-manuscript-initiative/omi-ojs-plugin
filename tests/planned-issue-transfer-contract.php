@@ -56,3 +56,12 @@ foreach (['SUBMISSION_FILE_REVIEW_FILE', 'SUBMISSION_FILE_REVIEW_ATTACHMENT', 'S
     check(!str_contains($policy, $forbidden), 'Private workflow stage must not be eligible: ' . $forbidden);
 }
 echo "Issue assertion and static route/source-policy contracts passed.\n";
+
+$adapterSource = file_get_contents(__DIR__ . '/../classes/Adapters/Ojs35Adapter.php');
+$start = strpos($adapterSource, 'public function mapIssueArticleSubmission(');
+$end = strpos($adapterSource, 'public function reconciliationKeywords(', $start);
+$projection = substr($adapterSource, $start, $end - $start);
+check(str_contains($projection, '$publication->getDoi()'), 'Use the native article DOI, not the issue DOI.');
+check(str_contains($projection, '$publication->getData(\'pages\')'), 'Preserve the native printed pages.');
+check(str_contains($projection, '$mapped[\'publicationExternalId\']'), 'Citation metadata must belong to the mapped publication version.');
+check(substr_count($source, '$adapter->mapIssueArticleSubmission($submission)') === 2, 'Both scoped issue projections must include citation metadata.');
