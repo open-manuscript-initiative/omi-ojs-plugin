@@ -7,7 +7,7 @@ namespace Illuminate\Http {
 namespace PKP\core { class PKPBaseController {} }
 namespace PKP\security { class Role { const ROLE_ID_MANAGER = 16; const ROLE_ID_SITE_ADMIN = 1; const ROLE_ID_SUB_EDITOR = 17; const ROLE_ID_ASSISTANT = 4097; } }
 namespace PKP\submissionFile { class SubmissionFile { const SUBMISSION_FILE_PROOF = 10; } }
-namespace APP\submission { class Submission { const STATUS_QUEUED = 1; } }
+namespace APP\submission { class Submission { const STATUS_QUEUED = 1; const STATUS_SCHEDULED = 5; } }
 namespace APP\core {
     class Application {
         const ASSOC_TYPE_REPRESENTATION = 521;
@@ -16,7 +16,7 @@ namespace APP\core {
     }
 }
 namespace APP\plugins\generic\studioIntegration {
-    class StudioIntegrationPlugin { public function getEnabled($id) { return true; } }
+    class StudioIntegrationPlugin { public function getEnabled($id) { return true; } public function getInstallationId(int $contextId, $request): string { return 'test-installation'; } }
 }
 namespace APP\plugins\generic\studioIntegration\classes\Adapters {
     class Ojs35Adapter {
@@ -56,6 +56,7 @@ namespace APP\facades {
     class Repo {
         public static function submission() { return new \Repository('submissions'); }
         public static function publication() { return new \Repository('publications'); }
+        public static function issue() { return new \Repository('issues'); }
         public static function galley() { return new \Repository('galleys'); }
         public static function submissionFile() { return new \Repository('proofs'); }
         public static function user() {
@@ -108,6 +109,9 @@ namespace {
             return $locale ? ($value[$locale] ?? null) : $value;
         }
         public function getLocalizedData($key) { return $this->data[$key] ?? ''; }
+        public function getJournalId() { return $this->getData('journalId'); }
+        public function getPublished() { return $this->getData('published'); }
+        public function hasRole($roles, $contextId) { return $contextId === 1 && (bool)array_intersect($roles, State::$roles[5] ?? []); }
     }
     class Genre extends Record {
         public function __construct() { parent::__construct(['id' => 2]); }
@@ -186,6 +190,7 @@ namespace {
                         'title' => 'Minta',
                     ]),
                 ],
+                'issues' => [41 => new Record(['id' => 41, 'journalId' => 1, 'published' => false])],
                 'galleys' => [],
                 'proofs' => [],
             ];
@@ -420,6 +425,50 @@ namespace {
         try { $controller->metadata(new \Illuminate\Http\Request($body)); throw new \RuntimeException('Metadata rejection missing'); }
         catch (HttpFailure $error) { check($error->getCode() === $expected, 'Wrong metadata rejection status'); }
         check(State::$metadataEvents === 0, 'Rejected proposal emitted a metadata event');
+    }
+
+    // Scheduled production articles require an explicit matching issue target.
+    $scheduled = function () {
+        State::reset();
+        State::$rows['submissions'][12]->data['status'] = 5;
+        State::$rows['publications'][13]->data['status'] = 5;
+        State::$rows['publications'][13]->data['issueId'] = 41;
+    };
+    $issueInspect = ['action' => 'inspect', 'submissionId' => 12, 'publicationId' => 13,
+        'manuscriptId' => 'demo', 'expectedIssueId' => 41, 'expectedInstallationId' => 'test-installation'];
+    $scheduled();
+    $target = $send($issueInspect);
+    check($target->status === 200 && $target->data['issueId'] === 41 &&
+        $target->data['installationId'] === 'test-installation' && $target->data['contextId'] === 1,
+        'Scheduled issue inspection failed');
+    $issueBody = array_merge(bodyFor('jats', $jats, 'article.jats.xml', 'application/xml'), [
+        'expectedIssueId' => 41, 'expectedInstallationId' => 'test-installation',
+        'expectedWorkflowToken' => $target->data['workflowToken'],
+    ]);
+    $result = $send($issueBody);
+    check($result->status === 200 && $result->data['issueId'] === 41 && $result->data['published'] === false,
+        'Scheduled issue transfer failed');
+    check(State::$rows['publications'][13]->getData('status') === 5, 'Scheduled status changed');
+    foreach ([
+        [403, function (&$body) { $body['expectedInstallationId'] = 'wrong'; }],
+        [403, function (&$body) { State::$roles = [5 => [17]]; }],
+        [409, function (&$body) { State::$rows['issues'][41]->data['published'] = true; }],
+        [409, function (&$body) { State::$rows['publications'][13]->data['issueId'] = 42; }],
+        [409, function (&$body) { $body['publicationId'] = 99; }],
+        [422, function (&$body) { unset($body['expectedWorkflowToken']); }],
+        [409, function (&$body) { State::$race = fn() => State::$rows['issues'][41]->data['published'] = true; }],
+        [409, function (&$body) { unset($body['expectedIssueId'], $body['expectedInstallationId']); }],
+    ] as [$expected, $setup]) {
+        $scheduled();
+        $body = $issueBody;
+        $setup($body);
+        try {
+            $result = $send($body);
+            check($result->status === $expected, 'Wrong issue transfer rejection status');
+        } catch (HttpFailure $error) {
+            check($error->getCode() === $expected, 'Wrong issue transfer rejection status');
+        }
+        check(!State::$files && !State::$rows['proofs'] && !State::$rows['galleys'], 'Rejected issue transfer left artifacts');
     }
 
     echo "Publication artifact transfer contract checks passed\n";

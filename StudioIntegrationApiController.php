@@ -200,6 +200,8 @@ class StudioIntegrationApiController extends PKPBaseController
             'artifactBase64' => 'required_if:action,transfer|string|max:90000000',
             'build' => 'required_if:action,transfer|array',
             'expectedWorkflowToken' => 'sometimes|string|size:64',
+            'expectedIssueId' => 'sometimes|integer|min:1',
+            'expectedInstallationId' => 'required_with:expectedIssueId|string|max:255',
             'confirmed' => 'required_if:action,transfer|accepted',
         ]);
 
@@ -214,8 +216,19 @@ class StudioIntegrationApiController extends PKPBaseController
             );
         }
 
+        $expectedIssueId = isset($data['expectedIssueId']) ? (int)$data['expectedIssueId'] : null;
+        if ($expectedIssueId !== null && (
+            !$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId()) ||
+            !hash_equals($this->plugin->getInstallationId($context->getId(), $request), (string)($data['expectedInstallationId'] ?? ''))
+        )) {
+            return $this->error('issue_target_forbidden', 'A matching journal installation and journal-wide editorial access are required.', 403);
+        }
+        if ($expectedIssueId !== null && (!isset($data['publicationId']) ||
+            ($data['action'] === 'transfer' && !isset($data['expectedWorkflowToken'])))) {
+            return $this->error('issue_target_required', 'An exact publication ID and an inspected workflow token are required for issue transfer.', 422);
+        }
         $submissionId = (int)$data['submissionId'];
-        $authorize = function () use ($context, $user, $submissionId, $data) {
+        $authorize = function () use ($context, $user, $submissionId, $data, $expectedIssueId) {
             $submission = Repo::submission()->get($submissionId);
             if (!$submission || (int)$submission->getData('contextId') !== (int)$context->getId()) {
                 abort(404, 'Submission not found.');
@@ -236,10 +249,20 @@ class StudioIntegrationApiController extends PKPBaseController
             }
 
             $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+            if ($expectedIssueId !== null) {
+                $issue = Repo::issue()->get($expectedIssueId, $context->getId());
+                if (!$issue || (int)$issue->getJournalId() !== (int)$context->getId() || $issue->getPublished() ||
+                    !$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId()) ||
+                    !$publication || (int)$publication->getData('issueId') !== $expectedIssueId ||
+                    (int)$submission->getData('status') !== Submission::STATUS_SCHEDULED) {
+                    abort(409, 'The article no longer belongs to the inspected planned issue.');
+                }
+            }
+            $expectedStatus = $expectedIssueId !== null ? Submission::STATUS_SCHEDULED : Submission::STATUS_QUEUED;
             if (
                 (int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION ||
                 !$publication ||
-                (int)$publication->getData('status') !== Submission::STATUS_QUEUED ||
+                (int)$publication->getData('status') !== $expectedStatus ||
                 (isset($data['publicationId']) &&
                     (int)$data['publicationId'] !== (int)$publication->getId())
             ) {
@@ -277,6 +300,9 @@ class StudioIntegrationApiController extends PKPBaseController
                 'submissionId' => $submissionId,
                 'publicationId' => (int)$publication->getId(),
                 'title' => $publication->getLocalizedData('title'),
+                'issueId' => $expectedIssueId,
+                'installationId' => $this->plugin->getInstallationId($context->getId(), $request),
+                'contextId' => (int)$context->getId(),
                 'locales' => $locales,
                 'genres' => $genres,
                 'formats' => PublicationArtifactDocument::formats((bool)$htmlAvailable),
@@ -360,8 +386,12 @@ class StudioIntegrationApiController extends PKPBaseController
                 $context,
                 $user,
                 $artifact,
-                &$used
+                &$used,
+                $expectedIssueId
             ) {
+                if ($expectedIssueId !== null) {
+                    DB::table('issues')->where('issue_id', $expectedIssueId)->lockForUpdate()->first();
+                }
                 DB::table('submissions')
                     ->where('submission_id', $submissionId)
                     ->lockForUpdate()
@@ -450,6 +480,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'protocol' => PublicationArtifactDocument::PROTOCOL,
                 'submissionId' => $submissionId,
                 'publicationId' => (int)$data['publicationId'],
+                'issueId' => $expectedIssueId,
                 'format' => $data['format'],
                 'mediaType' => $artifact['mediaType'],
                 'artifactFileName' => $artifact['fileName'],
