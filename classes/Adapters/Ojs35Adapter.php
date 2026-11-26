@@ -82,6 +82,21 @@ final class Ojs35Adapter
         ];
     }
 
+    /** Publication identifiers are exposed only in the manager-scoped planned issue projection. */
+    public function mapIssueArticleSubmission(object $submission): array
+    {
+        $mapped = $this->mapSubmission($submission);
+        $publication = $this->getHydratedCurrentPublication($submission);
+        if (!$publication || (string)$publication->getId() !== $mapped['publicationExternalId']) {
+            throw new \RuntimeException('Current issue publication changed during metadata projection.');
+        }
+        $mapped['citationMetadata'] = [
+            'doi' => $this->nullableString($publication->getDoi()),
+            'pages' => $this->nullableString($publication->getData('pages')),
+        ];
+        return $mapped;
+    }
+
     public function reconciliationKeywords(object $publication, string $primaryLocale): array
     {
         return $this->getPublicationKeywords($publication, $primaryLocale);
