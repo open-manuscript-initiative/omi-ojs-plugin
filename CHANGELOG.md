@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.2.0 — 2026-11-26
+
+- Shorten the planned-issue grid launch label to `OMI` to avoid wrapping and overlapping neighboring rows on narrow screens (#51).
+- Keep the full localized action as the native tooltip and retain the descriptive table-of-contents launcher, exact issue target and authorization checks.
+- Native mobile rendering on the operator's installation remains to be verified; no change to integration permissions or data contracts.
+
 ## 1.9.1.0 — 2026-11-26
 
 - Include native current-publication DOI and printed pages in manager-scoped planned issue import metadata (#49), without changing write permissions or substituting issue DOI for article DOI.
