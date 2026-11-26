@@ -43,3 +43,6 @@ msgstr "Geben Sie eine gültige Studio-URL ein."
 
 msgid "plugins.generic.studioIntegration.settings.installationIncomplete"
 msgstr "Die Plugin-Installation ist unvollständig oder einige Dateien sind nicht lesbar. Diese Prüfung löscht keine gespeicherten Einstellungen. Das Speichern ist deaktiviert, bis das vollständige Plugin-Paket und die Dateiberechtigungen wiederhergestellt sind."
+
+msgid "plugins.generic.studioIntegration.openIssueInStudio"
+msgstr "Gesamte Ausgabe in Studio öffnen"
