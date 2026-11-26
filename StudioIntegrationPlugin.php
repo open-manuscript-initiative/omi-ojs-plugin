@@ -190,6 +190,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             if ($url !== null) {
                 $row->addAction(new LinkAction(
                     'omiOpenIssueInStudio', new RedirectAction($url),
+                    'OMI', null,
                     __('plugins.generic.studioIntegration.openIssueInStudio')
                 ), GridRow::GRID_ACTION_POSITION_ROW_LEFT);
             }
