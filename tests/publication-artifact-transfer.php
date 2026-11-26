@@ -473,7 +473,7 @@ namespace {
 
     $inspectPages = ['action' => 'inspect', 'installationId' => 'test-installation',
         'contextId' => 1, 'issueId' => 41, 'submissionId' => 12, 'publicationId' => 13];
-    $sendPages = fn(array $data) => $controller->issuePageRange(new IlluminateHttpRequest($data));
+    $sendPages = fn(array $data) => $controller->issuePageRange(new \Illuminate\Http\Request($data));
     $scheduled();
     $initial = $sendPages($inspectPages)->data['snapshot'];
     check($initial['protocol'] === 'omi-issue-page-range/1' && $initial['pages'] === null, 'Invalid page inspection');
