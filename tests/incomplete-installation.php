@@ -80,9 +80,14 @@ namespace {
             verify($response->data['error']['code'] === 'PLUGIN_INSTALLATION_INCOMPLETE', 'Mixed-version API diagnostic required');
             $handler = new \APP\plugins\generic\studioIntegration\StudioIntegrationApiHandler($plugin);
             $launch = $handler->launch([], new class {
-                public function getUserVar(string $key): string { return $key === 'submissionId' ? '220' : '1'; }
+                public function getUserVar(string $key): ?string { return match ($key) { 'submissionId' => '220', 'redirect' => '1', default => null }; }
             });
             verify(!$launch->status && http_response_code() === 503, 'Mixed-version launch must stop before calling a missing plugin method');
+            $issueLaunch = $handler->launch([], new class {
+                public function getUserVar(string $key): ?string { return match ($key) { 'issueId' => '41', 'redirect' => '1', default => null }; }
+            });
+            verify(!$issueLaunch->status && http_response_code() === 503, 'Incomplete issue launch must fail before creating an assertion');
+            verify($issueLaunch->content['error']['code'] === 'PLUGIN_INSTALLATION_INCOMPLETE', 'Issue launch diagnostic must match API');
             echo "Mixed-version installation API/launch checks passed.\n";
             return;
         }
@@ -108,10 +113,15 @@ namespace {
             verify(!str_contains(json_encode($response->data), $root), 'Do not disclose installation paths');
             $handler = new \APP\plugins\generic\studioIntegration\StudioIntegrationApiHandler($plugin);
             $launch = $handler->launch([], new class {
-                public function getUserVar(string $key): string { return $key === 'submissionId' ? '220' : '1'; }
+                public function getUserVar(string $key): ?string { return match ($key) { 'submissionId' => '220', 'redirect' => '1', default => null }; }
             });
             verify(!$launch->status && http_response_code() === 503, 'Incomplete launch must not redirect or create an assertion');
             verify($launch->content['error']['code'] === 'PLUGIN_INSTALLATION_INCOMPLETE', 'Launch diagnostic must match API');
+            $issueLaunch = $handler->launch([], new class {
+                public function getUserVar(string $key): ?string { return match ($key) { 'issueId' => '41', 'redirect' => '1', default => null }; }
+            });
+            verify(!$issueLaunch->status && http_response_code() === 503, 'Incomplete issue launch must fail before creating an assertion');
+            verify($issueLaunch->content['error']['code'] === 'PLUGIN_INSTALLATION_INCOMPLETE', 'Issue launch diagnostic must match API');
             $blocked = $plugin->manage([], new class {
                 public function getUserVar(string $key): mixed { return $key === 'verb' ? 'settings' : '1'; }
             });

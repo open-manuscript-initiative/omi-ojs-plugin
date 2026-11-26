@@ -22,6 +22,21 @@ class StudioIntegrationApiHandler extends Handler
 
     public function launch(array $args, $request)
     {
+        $error = method_exists($this->plugin, 'getInstallationError')
+            ? $this->plugin->getInstallationError()
+            : [
+                'code' => 'PLUGIN_INSTALLATION_INCOMPLETE',
+                'message' => 'The OJS integration plugin files are from different versions. Ask the OJS administrator to reinstall the complete release package.',
+            ];
+        if ($error) {
+            http_response_code(503);
+            return new JSONMessage(false, ['error' => $error]);
+        }
+
+        if ($request->getUserVar('issueId') !== null) {
+            return $this->launchIssue($request);
+        }
+
         $submissionId = filter_var(
             $request->getUserVar('submissionId'),
             FILTER_VALIDATE_INT,
@@ -35,17 +50,6 @@ class StudioIntegrationApiHandler extends Handler
                     'message' => 'A valid submissionId is required.',
                 ],
             ]);
-        }
-
-        $error = method_exists($this->plugin, 'getInstallationError')
-            ? $this->plugin->getInstallationError()
-            : [
-                'code' => 'PLUGIN_INSTALLATION_INCOMPLETE',
-                'message' => 'The OJS integration plugin files are from different versions. Ask the OJS administrator to reinstall the complete release package.',
-            ];
-        if ($error) {
-            http_response_code(503);
-            return new JSONMessage(false, ['error' => $error]);
         }
 
         $requestedMode = (string)$request->getUserVar('mode');
@@ -88,6 +92,29 @@ class StudioIntegrationApiHandler extends Handler
                 'mode' => $resolvedMode,
             ]
         );
+    }
+
+    private function launchIssue($request)
+    {
+        $issueId = filter_var($request->getUserVar('issueId'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (!$issueId || $request->getUserVar('submissionId') !== null) {
+            return new JSONMessage(false, ['error' => ['code' => 'INVALID_ISSUE_ID', 'message' => 'Exactly one valid issueId is required.']]);
+        }
+        if (!method_exists($this->plugin, 'createIssueLaunchUrl')) {
+            http_response_code(503);
+            return new JSONMessage(false, ['error' => [
+                'code' => 'PLUGIN_INSTALLATION_INCOMPLETE',
+                'message' => 'The issue launch integration is not installed completely.',
+            ]]);
+        }
+        $launchUrl = $this->plugin->createIssueLaunchUrl($request, $issueId);
+        if ($launchUrl === null) {
+            return new JSONMessage(false, ['error' => ['code' => 'ISSUE_LAUNCH_FORBIDDEN', 'message' => 'The current editor cannot import this planned issue.']]);
+        }
+        if ((string)$request->getUserVar('redirect') === '1') {
+            $this->sendDirectRedirect($launchUrl);
+        }
+        return new JSONMessage(true, ['launchUrl' => $launchUrl, 'mode' => 'issue'], '0', ['launchUrl' => $launchUrl, 'mode' => 'issue']);
     }
 
     private function sendDirectRedirect(string $launchUrl): void
