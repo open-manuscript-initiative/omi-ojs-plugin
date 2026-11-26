@@ -10,7 +10,7 @@ The plugin implements the **OMI Integration API v1 / OJS profile** (`omi-integra
 - **Plugin type:** PKP Generic Plugin
 - **OMI protocol:** `omi-integration/1`
 - **Profile:** `omi-integration/1/ojs`
-- **Current source version:** `1.9.0.0`
+- **Current source version:** `1.9.1.0`
 - **License:** GNU General Public License v3.0
 
 The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms, signed review writeback, direct author submissions, and editor-authenticated publication artifact transfer. Development on `main` may contain improvements that are newer than the latest published release.
@@ -52,6 +52,7 @@ The integration is designed so that:
 
 - journal-manager-only planned issue manifest and ordered section/article metadata;
 - signed read-only issue launch and protected editorial DOCX transfer;
+- current-publication DOI and printed page metadata in planned issue imports;
 - native future issue grid and table-of-contents launcher (Hungarian, English and German);
 - exact issue-bound publication artifact inspection and transfer;
 - inspected and explicitly confirmed printed page-range metadata writeback.

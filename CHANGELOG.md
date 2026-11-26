@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.1.0 — 2026-11-26
+
+- Include native current-publication DOI and printed pages in manager-scoped planned issue import metadata (#49), without changing write permissions or substituting issue DOI for article DOI.
+- Coordinate with Studio 1.0.0-rc.5 for complete issue import, per-study artifact transfer and reviewed printed page writeback. Live end-to-end editorial acceptance remains required; neither component automatically publishes the issue.
+
 ## 1.9.0.0 — 2026-11-26
 
 - Add an ordered native planned-issue manifest preserving journal, issue, section and current publication identities (#43).
