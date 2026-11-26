@@ -65,3 +65,12 @@ check(str_contains($projection, '$publication->getDoi()'), 'Use the native artic
 check(str_contains($projection, '$publication->getData(\'pages\')'), 'Preserve the native printed pages.');
 check(str_contains($projection, '$mapped[\'publicationExternalId\']'), 'Citation metadata must belong to the mapped publication version.');
 check(substr_count($source, '$adapter->mapIssueArticleSubmission($submission)') === 2, 'Both scoped issue projections must include citation metadata.');
+
+$start = strpos($source, 'private function issuePublicationMatter(');
+$end = strpos($source, 'private function contextData(', $start);
+$matter = substr($source, $start, $end - $start);
+foreach (['publisherInstitution', 'mailingAddress', 'getMastheadUserIdsByRoleIds', 'withActive()', 'withMasthead()', 'enableEnrollmentMasthead'] as $required) {
+    check(str_contains($matter, $required), 'Missing native imprint/masthead boundary: ' . $required);
+}
+check(!str_contains($matter, 'getEmail(') && !str_contains($matter, 'reviewAssignment()'), 'Private account emails and reviewer data must not be projected.');
+check(substr_count($source, '$this->issuePublicationMatter($context)') === 1, 'Publication matter must remain scoped to the issue manifest.');
