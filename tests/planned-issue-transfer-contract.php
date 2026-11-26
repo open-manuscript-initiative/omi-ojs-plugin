@@ -74,3 +74,5 @@ foreach (['publisherInstitution', 'mailingAddress', 'getMastheadUserIdsByRoleIds
 }
 check(!str_contains($matter, 'getEmail(') && !str_contains($matter, 'reviewAssignment()'), 'Private account emails and reviewer data must not be projected.');
 check(substr_count($source, '$this->issuePublicationMatter($context)') === 1, 'Publication matter must remain scoped to the issue manifest.');
+
+check(str_contains($matter, "getAttribute('name')") && str_contains($matter, 'getFullNames()'), 'Preserve role and public name locale variants rather than flattening to the request language.');

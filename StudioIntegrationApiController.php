@@ -2054,9 +2054,9 @@ class StudioIntegrationApiController extends PKPBaseController
                     $user = Repo::user()->get($userId);
                     if (!$user || !\PKP\userGroup\relationships\UserUserGroup::withUserId($user->getId())
                         ->withUserGroupIds([$group->id])->withActive()->withMasthead()->first()) continue;
-                    $members[] = ['name' => $user->getFullName(), 'affiliation' => $plain($user->getData('affiliation'))];
+                    $members[] = ['name' => $user->getFullName(), 'localizedNames' => $plain($user->getFullNames()), 'affiliation' => $plain($user->getData('affiliation'))];
                 }
-                if ($members) $groups[] = ['role' => $plain($group->getLocalizedData('name')), 'members' => $members];
+                if ($members) $groups[] = ['role' => $plain($group->getAttribute('name')), 'members' => $members];
             }
         }
         // Do not include private account emails, reviewer identities, or user IDs.
