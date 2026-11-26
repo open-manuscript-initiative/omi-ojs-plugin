@@ -802,7 +802,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'submissionExternalId' => (string)$submission->getId(),
                 'publicationExternalId' => (string)$publication->getId(),
                 'sequence' => (float)$publication->getData('seq'),
-                'submission' => $adapter->mapSubmission($submission),
+                'submission' => $adapter->mapIssueArticleSubmission($submission),
             ];
         }
         foreach ($sections as &$section) {
@@ -918,7 +918,7 @@ class StudioIntegrationApiController extends PKPBaseController
         [$adapter, $submission] = $authorized;
         return response()->json([
             'protocol' => 'omi-integration/1',
-            'submission' => $adapter->mapSubmission($submission),
+            'submission' => $adapter->mapIssueArticleSubmission($submission),
             'contributors' => $adapter->mapContributors($submission),
             'files' => $this->issueSourceFiles($adapter, $submission),
         ])->header('Cache-Control', 'private, no-store');
