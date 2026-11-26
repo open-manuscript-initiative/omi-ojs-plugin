@@ -87,6 +87,9 @@ class StudioIntegrationApiController extends PKPBaseController
                 Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN,
                 Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT,
             ])])->name('api.omiIntegration.htmlGalley');
+        Route::post('issue-page-range', $this->issuePageRange(...))
+            ->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])])
+            ->name('api.omiIntegration.issuePageRange');
         Route::post('publication-artifact', $this->publicationArtifact(...))
             ->middleware(['has.user', self::roleAuthorizer([
                 Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN,
@@ -94,6 +97,121 @@ class StudioIntegrationApiController extends PKPBaseController
             ])])->name('api.omiIntegration.publicationArtifact');
     }
 
+
+    /**
+     * Update only the printed bibliographic page range, not physical PDF indices.
+     * The issue import assertion is read-only; this endpoint requires native user authentication.
+     */
+    public function issuePageRange(IlluminateRequest $input): JsonResponse
+    {
+        $data = $input->validate([
+            'action' => 'required|in:inspect,apply',
+            'installationId' => 'required|string|max:255',
+            'contextId' => 'required|integer|min:1',
+            'issueId' => 'required|integer|min:1',
+            'submissionId' => 'required|integer|min:1',
+            'publicationId' => 'required|integer|min:1',
+            'firstPrintedPage' => 'required_if:action,apply|integer|min:1|max:999999',
+            'lastPrintedPage' => 'required_if:action,apply|integer|min:1|max:999999',
+            'expectedWorkflowToken' => 'required_if:action,apply|string|size:64',
+            'confirmed' => 'required_if:action,apply|accepted',
+        ]);
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$this->plugin->getEnabled($context->getId())) {
+            return $this->error('editor_required', 'An authenticated editor is required.', 403);
+        }
+        $contextId = (int)$context->getId();
+        $issueId = (int)$data['issueId'];
+        $submissionId = (int)$data['submissionId'];
+        $publicationId = (int)$data['publicationId'];
+        $authorize = function () use ($context, $contextId, $user, $request, $data, $issueId, $submissionId, $publicationId) {
+            if ((int)$data['contextId'] !== $contextId ||
+                !hash_equals($this->plugin->getInstallationId($contextId, $request), (string)$data['installationId']) ||
+                !$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $contextId)) {
+                abort(403, 'Matching installation and journal-wide editorial access required.');
+            }
+            $issue = Repo::issue()->get($issueId, $contextId);
+            $submission = Repo::submission()->get($submissionId);
+            if (!$issue || (int)$issue->getJournalId() !== $contextId ||
+                !$submission || (int)$submission->getData('contextId') !== $contextId) {
+                abort(404, 'Planned issue or submission not found.');
+            }
+            $publication = Repo::publication()->get((int)$submission->getData('currentPublicationId'));
+            if ($issue->getPublished() || !$publication || (int)$publication->getId() !== $publicationId ||
+                (int)$publication->getData('submissionId') !== $submissionId ||
+                (int)$publication->getData('issueId') !== $issueId ||
+                (int)$submission->getData('stageId') !== WORKFLOW_STAGE_ID_PRODUCTION ||
+                (int)$submission->getData('status') !== Submission::STATUS_SCHEDULED ||
+                (int)$publication->getData('status') !== Submission::STATUS_SCHEDULED) {
+                abort(409, 'The exact current article must be scheduled in an unpublished production issue.');
+            }
+            $roles = Repo::user()->getAccessibleWorkflowStages($user->getId(), $contextId, $submission);
+            if (!array_intersect($roles[WORKFLOW_STAGE_ID_PRODUCTION] ?? [], [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN]) ||
+                !Repo::submission()->canEditPublication($submissionId, $user->getId())) {
+                abort(403, 'Native OJS production metadata write permission required.');
+            }
+            return [$submission, $publication];
+        };
+        $snapshot = function ($submission, $publication) use ($contextId, $issueId, $data) {
+            return [
+                'protocol' => 'omi-issue-page-range/1',
+                'installationId' => (string)$data['installationId'],
+                'contextId' => $contextId,
+                'issueId' => $issueId,
+                'submissionId' => (int)$submission->getId(),
+                'publicationId' => (int)$publication->getId(),
+                'pages' => $publication->getData('pages'),
+                'workflowToken' => WorkflowSnapshot::create($submission, $publication)['stateToken'],
+                'published' => false,
+            ];
+        };
+        if ($data['action'] === 'inspect') {
+            [$submission, $publication] = $authorize();
+            return response()->json(['snapshot' => $snapshot($submission, $publication)])->header('Cache-Control', 'no-store');
+        }
+        $first = (int)$data['firstPrintedPage'];
+        $last = (int)$data['lastPrintedPage'];
+        if ($first < 1 || $last < $first || $last > 999999) {
+            return $this->error('invalid_page_range', 'Provide an ordered positive printed page range.', 422);
+        }
+        $pages = $first === $last ? (string)$first : $first . '-' . $last;
+        $result = DB::transaction(function () use ($data, $context, $issueId, $submissionId, $publicationId, $pages, $authorize, $snapshot) {
+            // Same lock order as the issue-bound artifact transfer.
+            DB::table('issues')->where('issue_id', $issueId)->lockForUpdate()->first();
+            DB::table('submissions')->where('submission_id', $submissionId)->lockForUpdate()->first();
+            DB::table('publications')->where('publication_id', $publicationId)->lockForUpdate()->first();
+            [$submission, $publication] = $authorize();
+            $before = $snapshot($submission, $publication);
+            if (!hash_equals($before['workflowToken'], (string)$data['expectedWorkflowToken'])) {
+                abort(409, 'OJS metadata or workflow state changed. Inspect again.');
+            }
+            $changed = $before['pages'] !== $pages;
+            if ($changed) {
+                $params = ['id' => $publicationId, 'submissionId' => $submissionId, 'pages' => $pages];
+                if (Repo::publication()->validate($publication, $params, $submission, $context)) {
+                    abort(422, 'Native OJS validation rejected the page range.');
+                }
+                Repo::publication()->edit($publication, $params);
+            }
+            [$updatedSubmission, $updatedPublication] = $authorize();
+            $after = $snapshot($updatedSubmission, $updatedPublication);
+            if ($after['pages'] !== $pages) abort(409, 'OJS did not retain the requested printed page range.');
+            return [
+                'snapshot' => $after,
+                'receipt' => ['protocol' => 'omi-issue-page-range/1', 'installationId' => $after['installationId'],
+                    'contextId' => $after['contextId'], 'issueId' => $after['issueId'], 'submissionId' => $submissionId,
+                    'publicationId' => $publicationId, 'previousPages' => $before['pages'], 'pages' => $pages,
+                    'previousWorkflowToken' => $before['workflowToken'], 'workflowToken' => $after['workflowToken'],
+                    'unchanged' => !$changed, 'published' => false],
+                'submission' => $changed ? $updatedSubmission : null,
+            ];
+        });
+        if ($result['submission']) event(new MetadataChanged($result['submission']));
+        unset($result['submission']);
+        return response()->json($result)->header('Cache-Control', 'no-store');
+    }
 
     /** Native editorial permissions, current publication and compare-and-apply semantics. */
     public function metadata(IlluminateRequest $input): JsonResponse
@@ -893,6 +1011,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'publication.jats.write',
                 'publication.pdf.write',
                 'publication.provenance.verify',
+                'issue.pages.write',
                 'review.recommendations',
                 ...$this->reviewerRecommendationCapabilities($context),
             ],
