@@ -190,3 +190,48 @@ This protocol never:
 
 The editor authenticates through the native OJS API/session authorization used
 by the plugin endpoint.
+
+
+## Printed page ranges for planned issues
+
+Capability: `issue.pages.write`; protocol: `omi-issue-page-range/1`.
+
+Use the journal-scoped `POST /api/v1/omi-integration/issue-page-range`
+with a personal authenticated OJS editorial credential. The signed issue-import
+grant is read-only and cannot authorize this endpoint.
+
+Inspect the exact article before updating:
+
+```json
+{
+  "action": "inspect",
+  "installationId": "journal-installation",
+  "contextId": 1,
+  "issueId": 41,
+  "submissionId": 217,
+  "publicationId": 301
+}
+```
+
+The response contains a `snapshot` with the original `pages` value and
+`workflowToken`. After the editor checks the printed pagination, send the same
+identities with `action: "apply"`, `firstPrintedPage: 101`,
+`lastPrintedPage: 118`, `expectedWorkflowToken` from the inspection, and
+`confirmed: true`. OJS stores `101-118` in the native publication `pages`
+field; a single page is stored as `101`. The receipt returns previous and new
+pages, old and new workflow tokens, and an unchanged flag.
+
+Only a journal-wide editor with native production metadata permission can
+modify a current scheduled article in an unpublished issue. The operation
+locks the issue, submission and publication rows, then rechecks the destination
+and workflow token, validates the native publication patch and edits only the
+page metadata. A changed token or issue membership requires a fresh inspection.
+A fresh identical request does not repeat the edit or metadata event. No
+publication status, DOI, date, article order or galley is modified.
+
+This first version supports positive decimal printed page numbers from 1 to
+999999. Physical PDF page indices must not be submitted as printed labels.
+Roman numerals, nonnumeric article identifiers, cross-article overlap checking,
+client review UI and batch coordination remain client-side or future work.
+Perform page metadata updates after artifact transfers, or refresh the inspected
+workflow token before any subsequent transfer.
