@@ -37,7 +37,7 @@ report missing content. No write permissions are conveyed.
 
 ## Remaining end-to-end work
 
-- Add a localized **Open issue in Studio** action in OJS Future Issues and issue TOC.
+- Verify the localized **Open complete issue in Studio** action against the deployed Studio receiver in a native browser E2E test.
 - Implement the dedicated Studio receiver and single-use nonce enforcement, with
   bounded source downloads through the signed endpoints and strict origin validation.
 - Consume the ordered source descriptors and preserve the existing rich DOCX conversion
@@ -64,3 +64,7 @@ report missing content. No write permissions are conveyed.
 7. Re-import does not duplicate documents; existing local edits are not silently overwritten.
 8. Ordinary article/author/reviewer launches remain unchanged. Full native integration and
    browser E2E tests on supported OJS 3.5 versions are required before release.
+
+## Native OJS launcher
+
+The future issue grid exposes a native row action and the issue TOC modal exposes an escaped local launch link. Both use the native issue object, only for unpublished issues within the authenticated journal manager's context. A fresh assertion is minted only on click by the existing launch handler. Hungarian, English and German labels are included. Deployment must include the Studio receiver and issue assembly before enabling this feature in production.
