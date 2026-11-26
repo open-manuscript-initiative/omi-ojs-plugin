@@ -64,6 +64,11 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('issueId')
             ->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])])
             ->name('api.omiIntegration.issueImportManifest');
+        Route::get('issue-import/manifest', $this->signedIssueManifest(...))->name('api.omiIntegration.signedIssueManifest');
+        Route::get('issue-import/articles/{submissionId}', $this->issueArticle(...))
+            ->whereNumber('submissionId')->name('api.omiIntegration.issueArticle');
+        Route::get('issue-import/articles/{submissionId}/files/{submissionFileId}/content', $this->issueArticleFile(...))
+            ->whereNumber('submissionId')->whereNumber('submissionFileId')->name('api.omiIntegration.issueArticleFile');
         Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
         Route::get('contributors', $this->contributors(...))->name('api.omiIntegration.contributors');
@@ -599,7 +604,19 @@ class StudioIntegrationApiController extends PKPBaseController
         if (!$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId())) {
             return $this->error('issue_import_forbidden', 'Journal-wide editorial access is required.', 403);
         }
-        $issueId = (int)$input->route('issueId');
+        return $this->buildIssueImportManifest($context, (int)$input->route('issueId'));
+    }
+
+    public function signedIssueManifest(IlluminateRequest $input): JsonResponse
+    {
+        $authorized = $this->authorizeIssueImport($input);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$context, $issueId] = $authorized;
+        return $this->buildIssueImportManifest($context, $issueId);
+    }
+
+    private function buildIssueImportManifest(object $context, int $issueId): JsonResponse
+    {
         $issue = Repo::issue()->get($issueId, $context->getId());
         if (!$issue || (int)$issue->getJournalId() !== (int)$context->getId() || $issue->getPublished()) {
             return $this->error('planned_issue_not_found', 'An unpublished issue in this journal is required.', 404);
@@ -664,6 +681,112 @@ class StudioIntegrationApiController extends PKPBaseController
             ],
             'sections' => array_values($sections),
         ])->header('Cache-Control', 'private, no-store');
+    }
+
+    /** Verify issue scope, journal, installation, current role and unpublished status on every request. */
+    private function authorizeIssueImport(IlluminateRequest $input): array|JsonResponse
+    {
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        if (!$context) return $this->error('context_required', 'A journal context is required.', 400);
+        $authorization = trim((string)$input->header('Authorization', ''));
+        if (!preg_match('/^OMI\\s+([A-Za-z0-9_-]+)\\.([A-Za-z0-9_-]+)$/', $authorization, $matches)) {
+            return $this->error('authentication_required', 'A signed issue assertion is required.', 401);
+        }
+        $secret = (string)$this->plugin->getSetting($context->getId(), 'sharedSecret');
+        $claims = $secret !== '' ? LaunchToken::verify($matches[1], $matches[2], $secret, $context->getId()) : null;
+        if (!$claims ||
+            ($claims['profile'] ?? '') !== 'omi-integration/1/ojs' ||
+            ($claims['installationId'] ?? '') !== $this->plugin->getInstallationId($context->getId(), $request)) {
+            return $this->error('invalid_assertion', 'Invalid or expired issue assertion.', 401);
+        }
+        if (($claims['actorMode'] ?? '') !== 'editor' ||
+            ($claims['scope'] ?? []) !== ['issue.import.read'] ||
+            isset($claims['submission']) || isset($claims['reviewAssignment'])) {
+            return $this->error('insufficient_scope', 'An issue-only editorial read grant is required.', 403);
+        }
+        $actorId = (int)($claims['actor']['externalId'] ?? 0);
+        $actor = $actorId > 0 ? Repo::user()->get($actorId) : null;
+        if (!$actor || !$actor->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId())) {
+            return $this->error('issue_import_forbidden', 'Current journal-wide editorial access is required.', 403);
+        }
+        $issueId = (int)($claims['issue']['externalId'] ?? 0);
+        $issue = $issueId > 0 ? Repo::issue()->get($issueId, $context->getId()) : null;
+        if (!$issue || (int)$issue->getJournalId() !== (int)$context->getId() || $issue->getPublished()) {
+            return $this->error('planned_issue_not_found', 'An unpublished issue in this journal is required.', 404);
+        }
+        return [$context, $issueId];
+    }
+
+    private function authorizeIssueArticle(IlluminateRequest $input): array|JsonResponse
+    {
+        $authorized = $this->authorizeIssueImport($input);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$context, $issueId] = $authorized;
+        $submissionId = (int)$input->route('submissionId');
+        $adapter = new Ojs35Adapter();
+        $submission = $adapter->getSubmission($submissionId, $context->getId());
+        $publication = $submission?->getCurrentPublication();
+        if (!$submission || !$publication ||
+            (int)$submission->getData('status') !== Submission::STATUS_SCHEDULED ||
+            (int)$publication->getData('issueId') !== $issueId) {
+            return $this->error('issue_article_not_found', 'The current article is not scheduled in this issue.', 404);
+        }
+        return [$adapter, $submission];
+    }
+
+    /** Never disclose review attachments, internal queries, or other private workflow files. */
+    private function issueSourceFiles(Ojs35Adapter $adapter, object $submission): array
+    {
+        $priority = [
+            SubmissionFile::SUBMISSION_FILE_PRODUCTION_READY => 0,
+            SubmissionFile::SUBMISSION_FILE_COPYEDIT => 1,
+            SubmissionFile::SUBMISSION_FILE_FINAL => 2,
+            SubmissionFile::SUBMISSION_FILE_SUBMISSION => 3,
+        ];
+        $files = array_values(array_filter($adapter->mapFiles($submission), static function (array $file) use ($priority): bool {
+            return isset($priority[(int)$file['stage']]) &&
+                strtoupper(trim((string)$file['genreKey'])) === 'SUBMISSION' &&
+                (strtolower((string)$file['mediaType']) === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+                    str_ends_with(strtolower((string)$file['name']), '.docx'));
+        }));
+        usort($files, static fn (array $a, array $b): int =>
+            ($priority[(int)$a['stage']] <=> $priority[(int)$b['stage']]) ?:
+            strcmp((string)$b['updatedAt'], (string)$a['updatedAt']) ?:
+            ((int)$b['revision'] <=> (int)$a['revision']) ?:
+            ((int)$b['externalId'] <=> (int)$a['externalId']));
+        foreach ($files as &$file) {
+            $file['contentPath'] = 'issue-import/articles/' . $submission->getId() . '/files/' . rawurlencode($file['externalId']) . '/content';
+        }
+        unset($file);
+        return $files;
+    }
+
+    public function issueArticle(IlluminateRequest $input): JsonResponse
+    {
+        $authorized = $this->authorizeIssueArticle($input);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$adapter, $submission] = $authorized;
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'submission' => $adapter->mapSubmission($submission),
+            'contributors' => $adapter->mapContributors($submission),
+            'files' => $this->issueSourceFiles($adapter, $submission),
+        ])->header('Cache-Control', 'private, no-store');
+    }
+
+    public function issueArticleFile(IlluminateRequest $input): BinaryFileResponse|JsonResponse
+    {
+        $authorized = $this->authorizeIssueArticle($input);
+        if ($authorized instanceof JsonResponse) return $authorized;
+        [$adapter, $submission] = $authorized;
+        $fileId = (int)$input->route('submissionFileId');
+        foreach ($this->issueSourceFiles($adapter, $submission) as $file) {
+            if ((int)$file['externalId'] === $fileId) {
+                return $this->sendSubmissionFile((int)$submission->getId(), $fileId);
+            }
+        }
+        return $this->error('file_not_found', 'An eligible issue article source file was not found.', 404);
     }
 
     public function submissionOptions(IlluminateRequest $illuminateRequest): JsonResponse
@@ -976,6 +1099,11 @@ class StudioIntegrationApiController extends PKPBaseController
             }
         }
 
+        return $this->sendSubmissionFile($submissionId, $submissionFileId);
+    }
+
+    private function sendSubmissionFile(int $submissionId, int $submissionFileId): BinaryFileResponse|JsonResponse
+    {
         $submissionFile = Repo::submissionFile()->get($submissionFileId, $submissionId);
         if (!$submissionFile || (int)$submissionFile->getData('submissionId') !== $submissionId) return $this->error('file_not_found', 'Submission file not found.', 404);
         $fileId = (int)$submissionFile->getData('fileId');
