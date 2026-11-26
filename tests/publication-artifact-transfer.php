@@ -471,5 +471,51 @@ namespace {
         check(!State::$files && !State::$rows['proofs'] && !State::$rows['galleys'], 'Rejected issue transfer left artifacts');
     }
 
+    $inspectPages = ['action' => 'inspect', 'installationId' => 'test-installation',
+        'contextId' => 1, 'issueId' => 41, 'submissionId' => 12, 'publicationId' => 13];
+    $sendPages = fn(array $data) => $controller->issuePageRange(new \Illuminate\Http\Request($data));
+    $scheduled();
+    $initial = $sendPages($inspectPages)->data['snapshot'];
+    check($initial['protocol'] === 'omi-issue-page-range/1' && $initial['pages'] === null, 'Invalid page inspection');
+    $pageBody = array_merge($inspectPages, ['action' => 'apply', 'firstPrintedPage' => 101,
+        'lastPrintedPage' => 118, 'expectedWorkflowToken' => $initial['workflowToken'], 'confirmed' => true]);
+    $result = $sendPages($pageBody)->data;
+    check($result['receipt']['pages'] === '101-118' && $result['receipt']['previousPages'] === null, 'Printed pages not written');
+    check($result['snapshot']['workflowToken'] !== $initial['workflowToken'], 'Page update did not change workflow token');
+    check(State::$rows['publications'][13]->getData('status') === 5 && State::$rows['publications'][13]->getData('issueId') === 41, 'Page update changed publication state');
+    check(State::$metadataEvents === 1, 'Metadata event not emitted');
+    check(!State::$files && !State::$rows['galleys'], 'Page write unexpectedly created artifacts');
+    $retry = $pageBody;
+    $retry['expectedWorkflowToken'] = $result['snapshot']['workflowToken'];
+    check($sendPages($retry)->data['receipt']['unchanged'] === true && State::$metadataEvents === 1, 'Identical page range should not write twice');
+    $retry['firstPrintedPage'] = $retry['lastPrintedPage'] = 119;
+    check($sendPages($retry)->data['receipt']['pages'] === '119', 'Single printed page not normalized');
+    foreach ([
+        [403, function (&$body) { $body['installationId'] = 'other'; }],
+        [403, function (&$body) { $body['contextId'] = 2; }],
+        [403, function (&$body) { State::$roles = [5 => [17]]; }],
+        [403, function (&$body) { State::$canEdit = false; }],
+        [404, function (&$body) { State::$rows['issues'][41]->data['journalId'] = 2; }],
+        [409, function (&$body) { State::$rows['issues'][41]->data['published'] = true; }],
+        [409, function (&$body) { $body['publicationId'] = 99; }],
+        [409, function (&$body) { State::$rows['publications'][13]->data['issueId'] = 42; }],
+        [409, function (&$body) { State::$race = fn() => State::$rows['publications'][13]->data['pages'] = '2-8'; }],
+        [409, function (&$body) { State::$race = fn() => State::$rows['issues'][41]->data['published'] = true; }],
+        [422, function (&$body) { $body['lastPrintedPage'] = 100; }],
+        [422, function (&$body) { State::$invalidFile = true; }],
+    ] as [$expected, $setup]) {
+        $scheduled();
+        $body = $pageBody;
+        $body['expectedWorkflowToken'] = $sendPages($inspectPages)->data['snapshot']['workflowToken'];
+        $setup($body);
+        try {
+            $result = $sendPages($body);
+            check($result->status === $expected, 'Wrong page range rejection status');
+        } catch (HttpFailure $error) {
+            check($error->getCode() === $expected, 'Wrong page range rejection status');
+        }
+        check(State::$rows['publications'][13]->getData('pages') !== '101-118' && State::$metadataEvents === 0, 'Rejected page write changed metadata');
+    }
+
     echo "Publication artifact transfer contract checks passed\n";
 }
