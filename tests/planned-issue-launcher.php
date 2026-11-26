@@ -23,7 +23,7 @@ namespace APP\controllers\grid\issues {
     }
 }
 namespace PKP\linkAction {
-    class LinkAction { public function __construct(public string $id, public object $request, public string $label) {} }
+    class LinkAction { public function __construct(public string $id, public object $request, public string $label, public ?string $image = null, public ?string $toolTip = null) {} }
 }
 namespace PKP\linkAction\request {
     class RedirectAction { public function __construct(public string $url) {} }
@@ -83,6 +83,7 @@ namespace {
     $actions = $renderRow($planned, new FutureIssueGridHandler());
     check(isset($actions['omiOpenIssueInStudio']), 'Future issue needs native row action');
     [$action, $position] = $actions['omiOpenIssueInStudio'];
+    check($action->label === 'OMI' && $action->toolTip === 'Open complete issue <test>', 'Grid action must use a compact label with the full localized tooltip');
     check($position === 'left' && $action->request->url === '/journal/omiIntegration/launch?issueId=41&redirect=1', 'Must launch exact native issue, not a submission');
     check(!$renderRow(new Issue(42, 1, true), new FutureIssueGridHandler()), 'Published issues must not launch');
     check(!$renderRow(new Issue(42, 2), new FutureIssueGridHandler()), 'Other journal must not launch');
