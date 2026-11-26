@@ -59,6 +59,11 @@ class StudioIntegrationApiController extends PKPBaseController
         Route::get('', $this->capabilities(...))->name('api.omiIntegration.capabilities');
         Route::post('metadata', $this->metadata(...))->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT])])->name('api.omiIntegration.metadata');
         Route::get('workflow-status', $this->workflowStatus(...))->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT])])->name('api.omiIntegration.workflowStatus');
+        // Planned issues contain private editorial material.
+        Route::get('issues/{issueId}/import-manifest', $this->issueImportManifest(...))
+            ->whereNumber('issueId')
+            ->middleware(['has.user', self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])])
+            ->name('api.omiIntegration.issueImportManifest');
         Route::get('submission-options', $this->submissionOptions(...))->name('api.omiIntegration.submissionOptions');
         Route::get('submission', $this->submission(...))->name('api.omiIntegration.submission');
         Route::get('contributors', $this->contributors(...))->name('api.omiIntegration.contributors');
@@ -579,6 +584,88 @@ class StudioIntegrationApiController extends PKPBaseController
     }
 
     /** Public submission requirements; creation remains protected by native PKP author authorization. */
+    /**
+     * Read-only table of contents for a future issue, using native OJS
+     * section ordering and current, scheduled publications.
+     */
+    public function issueImportManifest(IlluminateRequest $input): JsonResponse
+    {
+        $request = Application::get()->getRequest();
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user) {
+            return $this->error('authentication_required', 'A journal and authenticated editor are required.', 401);
+        }
+        if (!$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId())) {
+            return $this->error('issue_import_forbidden', 'Journal-wide editorial access is required.', 403);
+        }
+        $issueId = (int)$input->route('issueId');
+        $issue = Repo::issue()->get($issueId, $context->getId());
+        if (!$issue || (int)$issue->getJournalId() !== (int)$context->getId() || $issue->getPublished()) {
+            return $this->error('planned_issue_not_found', 'An unpublished issue in this journal is required.', 404);
+        }
+
+        $sections = [];
+        foreach (Repo::section()->getByIssueId($issueId) as $section) {
+            $sections[(string)$section->getId()] = [
+                'externalId' => (string)$section->getId(),
+                'title' => (array)$section->getData('title'),
+                'sequence' => count($sections) + 1,
+                'articles' => [],
+            ];
+        }
+
+        $adapter = new Ojs35Adapter();
+        $submissions = Repo::submission()->getCollector()
+            ->filterByContextIds([$context->getId()])
+            ->filterByIssueIds([$issueId])
+            ->filterByStatus([Submission::STATUS_SCHEDULED])
+            ->getMany();
+
+        foreach ($submissions as $submission) {
+            $publication = $submission->getCurrentPublication();
+            // The collector may match older publication versions.
+            if (!$publication || (int)$publication->getData('issueId') !== $issueId) {
+                continue;
+            }
+            $sectionId = (string)$publication->getData('sectionId');
+            if (!isset($sections[$sectionId])) {
+                return $this->error('issue_section_unresolved', 'A scheduled article has no resolvable issue section.', 409);
+            }
+            $sections[$sectionId]['articles'][] = [
+                'submissionExternalId' => (string)$submission->getId(),
+                'publicationExternalId' => (string)$publication->getId(),
+                'sequence' => (float)$publication->getData('seq'),
+                'submission' => $adapter->mapSubmission($submission),
+            ];
+        }
+        foreach ($sections as &$section) {
+            usort($section['articles'], static fn (array $a, array $b): int =>
+                ($a['sequence'] <=> $b['sequence']) ?: ((int)$a['submissionExternalId'] <=> (int)$b['submissionExternalId']));
+        }
+        unset($section);
+
+        return response()->json([
+            'protocol' => 'omi-integration/1',
+            'profile' => 'omi-integration/1/ojs',
+            'context' => $this->contextData($context),
+            'issue' => [
+                'externalId' => (string)$issueId,
+                'title' => (array)$issue->getData('title'),
+                'description' => (array)$issue->getData('description'),
+                'identification' => $issue->getIssueIdentification(),
+                'volume' => $issue->getVolume(),
+                'number' => $issue->getNumber(),
+                'year' => $issue->getYear(),
+                'published' => false,
+                'doi' => $issue->getDoi(),
+                'printIssn' => $context->getData('printIssn'),
+                'onlineIssn' => $context->getData('onlineIssn'),
+            ],
+            'sections' => array_values($sections),
+        ])->header('Cache-Control', 'private, no-store');
+    }
+
     public function submissionOptions(IlluminateRequest $illuminateRequest): JsonResponse
     {
         $context = Application::get()->getRequest()->getContext();
