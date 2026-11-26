@@ -68,3 +68,9 @@ report missing content. No write permissions are conveyed.
 ## Native OJS launcher
 
 The future issue grid exposes a native row action and the issue TOC modal exposes an escaped local launch link. Both use the native issue object, only for unpublished issues within the authenticated journal manager's context. A fresh assertion is minted only on click by the existing launch handler. Hungarian, English and German labels are included. Deployment must include the Studio receiver and issue assembly before enabling this feature in production.
+
+## Publication matter metadata
+
+The manager-scoped planned issue manifest now carries `context.publicationMatter` with publisher, mailing address, public contact name and current native OJS editorial masthead groups (public active memberships only). No private account emails or reviewer lists are projected. Custom masthead/imprint plugins are not assumed to use the same settings; their separately stored fields require an explicit adapter. Studio can use these snapshots as reusable publication matter fields.
+
+Role names, public name variants and affiliations retain their OJS language maps (including hu/hu_HU and en/en_US). The snapshot is not restricted to the API request language. Do not synthesize translations for missing values.

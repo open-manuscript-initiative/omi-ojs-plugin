@@ -814,7 +814,7 @@ class StudioIntegrationApiController extends PKPBaseController
         return response()->json([
             'protocol' => 'omi-integration/1',
             'profile' => 'omi-integration/1/ojs',
-            'context' => $this->contextData($context),
+            'context' => array_merge($this->contextData($context), ['publicationMatter' => $this->issuePublicationMatter($context)]),
             'issue' => [
                 'externalId' => (string)$issueId,
                 'title' => (array)$issue->getData('title'),
@@ -2021,6 +2021,51 @@ class StudioIntegrationApiController extends PKPBaseController
             if ($this->hasScope($claims, $scope)) return true;
         }
         return false;
+    }
+
+    /** Only the manager-scoped planned-issue manifest receives this public-facing snapshot. */
+    private function issuePublicationMatter(object $context): array
+    {
+        $plain = static function ($value) {
+            $text = static fn ($item): string => trim(html_entity_decode(strip_tags(preg_replace('/<\\/?(?:p|div|br|li)\\b[^>]*>/i', "\n", (string)$item) ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            if (is_array($value)) return array_map($text, array_filter($value, 'is_string'));
+            return is_string($value) ? $text($value) : '';
+        };
+        $groups = [];
+        if ($context->getData('enableEnrollmentMasthead')) {
+            $repository = Repo::userGroup();
+            // The sorted repository method was introduced in 3.5.0-6;
+            // mirror the native about-page selection on earlier 3.5 patches.
+            if (method_exists($repository, 'getSortedMastheadUserGroups')) {
+                $roles = $repository->getSortedMastheadUserGroups($context);
+            } else {
+                $order = (array)$context->getData('mastheadUserGroupIds');
+                $roles = \PKP\userGroup\UserGroup::withContextIds([$context->getId()])
+                    ->masthead(true)->excludeRoles([Role::ROLE_ID_REVIEWER])->get()
+                    ->sortBy(static function ($group) use ($order) {
+                        $position = array_search($group->id, $order);
+                        return $position === false ? PHP_INT_MAX : $position;
+                    });
+            }
+            $ids = $repository->getMastheadUserIdsByRoleIds($roles->all(), $context->getId());
+            foreach ($roles as $group) {
+                $members = [];
+                foreach ($ids[$group->id] ?? [] as $userId) {
+                    $user = Repo::user()->get($userId);
+                    if (!$user || !\PKP\userGroup\relationships\UserUserGroup::withUserId($user->getId())
+                        ->withUserGroupIds([$group->id])->withActive()->withMasthead()->first()) continue;
+                    $members[] = ['name' => $user->getFullName(), 'localizedNames' => $plain($user->getFullNames()), 'affiliation' => $plain($user->getData('affiliation'))];
+                }
+                if ($members) $groups[] = ['role' => $plain($group->getAttribute('name')), 'members' => $members];
+            }
+        }
+        // Do not include private account emails, reviewer identities, or user IDs.
+        return [
+            'publisher' => $plain($context->getData('publisherInstitution')),
+            'address' => $plain($context->getData('mailingAddress')),
+            'contactName' => $plain($context->getData('contactName')),
+            'editorialBoard' => $groups,
+        ];
     }
 
     private function contextData(object $context): array
