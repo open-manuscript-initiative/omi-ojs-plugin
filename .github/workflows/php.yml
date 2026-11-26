@@ -85,6 +85,9 @@ jobs:
       - name: Check native revision writeback contract
         run: php tests/revision-writeback-contract.php
 
+      - name: Check native planned issue launcher
+        run: php tests/planned-issue-launcher.php
+
       - name: Check planned issue transfer contract
         run: php tests/planned-issue-transfer-contract.php
 
