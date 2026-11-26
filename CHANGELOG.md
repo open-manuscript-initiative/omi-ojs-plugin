@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.9.0.0 — 2026-11-26
+
+- Add an ordered native planned-issue manifest preserving journal, issue, section and current publication identities (#43).
+- Add a dedicated signed editorial issue-import assertion and protected manuscript transfer, restricted to scheduled articles in the same unpublished issue (#44).
+- Add localized launch actions in the native future issue grid and table of contents (#45).
+- Extend publication artifact transfer with exact installation, issue and publication checks and inspected workflow tokens; retain native editorial approval (#46).
+- Add authenticated printed page-range inspection and confirmed metadata writeback with native permission checks, transactional locks and stale-token rejection (#47).
+- Requires a compatible Studio issue receiver and project assembly for complete issue launch. Studio batch publishing and live end-to-end acceptance remain separate; this plugin release does not automatically publish articles or issues.
+
 ## 1.8.7.0 — 2026-11-18
 
 - Load launch/API handler files relative to the plugin itself, independently of the PHP process working directory. Normalize asset URL separators while retaining the current OJS origin and installation path.
