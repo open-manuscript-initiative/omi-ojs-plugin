@@ -3,6 +3,11 @@ namespace APP\plugins\generic\studioIntegration;
 
 use APP\core\Application;
 use APP\facades\Repo;
+use APP\issue\Issue;
+use APP\controllers\grid\issues\IssueGridRow;
+use APP\controllers\grid\issues\FutureIssueGridHandler;
+use PKP\controllers\grid\GridRow;
+use PKP\linkAction\request\RedirectAction;
 use APP\plugins\generic\studioIntegration\classes\Core\LaunchToken;
 use APP\plugins\generic\studioIntegration\classes\StudioIntegrationSettingsForm;
 use PKP\core\APIRouter;
@@ -20,6 +25,7 @@ require_once __DIR__ . '/bootstrap.php';
 class StudioIntegrationPlugin extends GenericPlugin
 {
     private bool $assetsInjected = false;
+    private bool $renderingIssueToc = false;
 
     /** Check files before creating assertions or entering helper-dependent APIs. */
     public function getInstallationError(): ?array
@@ -51,6 +57,7 @@ class StudioIntegrationPlugin extends GenericPlugin
         $success = parent::register($category, $path, $mainContextId);
         if ($success && $this->getEnabled($mainContextId)) {
             Hook::add('TemplateManager::display', $this->displayTemplateHook(...));
+            Hook::add('TemplateManager::fetch', $this->issueLauncherTemplateHook(...));
             Hook::add('LoadHandler', $this->loadApiHandler(...));
             Hook::add('APIHandler::endpoints::plugin', $this->registerApiController(...));
         }
@@ -138,6 +145,75 @@ class StudioIntegrationPlugin extends GenericPlugin
             new StudioIntegrationApiController($this),
         ]);
         return Hook::CONTINUE;
+    }
+
+    /** Return a local launch URL only for an unpublished issue in the current journal. */
+    private function issueLauncherUrl($request, Issue $issue): ?string
+    {
+        $context = $request->getContext();
+        $user = $request->getUser();
+        if (!$context || !$user || !$issue->getId() || $issue->getPublished() ||
+            (int)$issue->getJournalId() !== (int)$context->getId() ||
+            !$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId()) ||
+            trim((string)$this->getSetting($context->getId(), 'studioUrl')) === '' ||
+            $this->getInstallationError()) {
+            return null;
+        }
+        // Do not mint assertions while rendering a list or modal. The existing
+        // launch handler checks the actor and issue again when clicked.
+        return $request->getDispatcher()->url(
+            $request, PKPApplication::ROUTE_PAGE, $context->getPath(),
+            'omiIntegration', 'launch', null,
+            ['issueId' => (int)$issue->getId(), 'redirect' => 1]
+        );
+    }
+
+    /**
+     * OJS 3.5 renders the native future-issue grid and issue TOC via fetch(),
+     * not display(). Use the actual row/issue object, never DOM-derived IDs.
+     */
+    public function issueLauncherTemplateHook(string $hookName, array $params): bool
+    {
+        $templateMgr = $params[0];
+        $template = $params[1];
+        if (!in_array($template, ['controllers/grid/gridRow.tpl', 'controllers/grid/issues/issueToc.tpl'], true)) {
+            return false;
+        }
+        $request = Application::get()->getRequest();
+        if ($template === 'controllers/grid/gridRow.tpl') {
+            $grid = $templateMgr->getTemplateVars('grid');
+            $row = $templateMgr->getTemplateVars('row');
+            if (!$grid instanceof FutureIssueGridHandler || !$row instanceof IssueGridRow) return false;
+            $issue = $row->getData();
+            if (!$issue instanceof Issue) return false;
+            $url = $this->issueLauncherUrl($request, $issue);
+            if ($url !== null) {
+                $row->addAction(new LinkAction(
+                    'omiOpenIssueInStudio', new RedirectAction($url),
+                    __('plugins.generic.studioIntegration.openIssueInStudio')
+                ), GridRow::GRID_ACTION_POSITION_ROW_LEFT);
+            }
+            return false; // Keep the normal PKP grid rendering.
+        }
+        if ($this->renderingIssueToc) return false;
+        $issue = $templateMgr->getTemplateVars('issue');
+        if (!$issue instanceof Issue) return false;
+        $url = $this->issueLauncherUrl($request, $issue);
+        if ($url === null) return false;
+
+        // Preserve the native AJAX TOC contents, including its scripts and
+        // grid. Guard the nested fetch to avoid recursively invoking ourselves.
+        $this->renderingIssueToc = true;
+        try {
+            $native = $templateMgr->fetch($template, $params[2], $params[3]);
+        } finally {
+            $this->renderingIssueToc = false;
+        }
+        $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $params[4] = '<p class="omi-issue-launcher"><a class="pkp_button" href="' .
+            $escape($url) . '" rel="noreferrer">' .
+            $escape(__('plugins.generic.studioIntegration.openIssueInStudio')) . '</a></p>' . $native;
+        return true;
     }
 
     public function displayTemplateHook(string $hookName, array $params): bool
