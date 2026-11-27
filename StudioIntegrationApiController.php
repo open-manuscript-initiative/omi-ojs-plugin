@@ -312,7 +312,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'publicationId' => 'required_if:action,transfer|integer|min:1',
             'locale' => 'required_if:action,transfer|string|max:32',
             'genreId' => 'required_if:action,transfer|integer|min:1',
-            'format' => 'required_if:action,transfer|in:html,jats,pdf-print,pdf-interactive',
+            'format' => 'required_if:action,transfer|in:html,jats,pdf-print,pdf-interactive,epub',
             'mediaType' => 'required_if:action,transfer|string|max:128',
             'fileName' => 'required_if:action,transfer|string|max:255',
             'artifactBase64' => 'required_if:action,transfer|string|max:90000000',
@@ -334,6 +334,12 @@ class StudioIntegrationApiController extends PKPBaseController
             );
         }
 
+        if ($data['action'] === 'transfer' && ($data['format'] ?? '') === 'epub') {
+            if (!isset($data['expectedWorkflowToken'], $data['expectedInstallationId']) ||
+                !hash_equals($this->plugin->getInstallationId($context->getId(), $request), (string)$data['expectedInstallationId'])) {
+                return $this->error('epub_target_required', 'EPUB requires the exact inspected installation and workflow token.', 422);
+            }
+        }
         $expectedIssueId = isset($data['expectedIssueId']) ? (int)$data['expectedIssueId'] : null;
         if ($expectedIssueId !== null && (
             !$user->hasRole([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN], $context->getId()) ||
@@ -391,6 +397,9 @@ class StudioIntegrationApiController extends PKPBaseController
             }
             if (isset($data['expectedWorkflowToken']) && !hash_equals(WorkflowSnapshot::create($submission, $publication)['stateToken'], (string)$data['expectedWorkflowToken'])) {
                 abort(409, 'OJS metadata or workflow state changed. Inspect the destination again.');
+            }
+            if (($data['format'] ?? '') === 'epub' && !Repo::submission()->canEditPublication($submissionId, $user->getId())) {
+                abort(403, 'Native publication edit permission required.');
             }
             return [$submission, $publication];
         };
@@ -1009,6 +1018,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'editor.publication-artifact.write',
                 'publication.html.write',
                 'publication.jats.write',
+                ...(class_exists(\ZipArchive::class) ? ['publication.epub.write'] : []),
                 'publication.pdf.write',
                 'publication.provenance.verify',
                 'issue.pages.write',

@@ -235,3 +235,7 @@ Roman numerals, nonnumeric article identifiers, cross-article overlap checking,
 client review UI and batch coordination remain client-side or future work.
 Perform page metadata updates after artifact transfers, or refresh the inspected
 workflow token before any subsequent transfer.
+
+## EPUB 3 article proofs (Preview)
+
+The optional `epub` format uses `application/epub+zip`, max 32 MiB, and requires PHP ZipArchive. The receiver applies the same bounded static EPUB archive validation as OMP (no active content, external resources, unsafe ZIP paths or unresolved links), independently verifies build provenance and requires the exact inspected installation and workflow token plus native edit permission. Studio must validate the exact bytes with its isolated EPUBCheck before transfer. Native OJS approval and publication remain separate. Whole-issue EPUB is a separate target, never a galley of one article. Studio enablement and native installation-level acceptance remain pending.
