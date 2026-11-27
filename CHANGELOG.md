@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.0.0 — 2026-11-27
+
+- Extend planned-issue manifests with native imprint and editorial masthead metadata, retaining multilingual values (#53).
+- Retire PHP 8.2 from the supported CI matrix; support PHP 8.3 and 8.4 (#54).
+- Keep OJS native editorial authorization and publication approval unchanged. Compatible Studio issue assembly is required for consuming the extended metadata.
+
 ## 1.9.2.0 — 2026-11-26
 
 - Shorten the planned-issue grid launch label to `OMI` to avoid wrapping and overlapping neighboring rows on narrow screens (#51).
