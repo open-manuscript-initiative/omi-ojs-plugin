@@ -325,7 +325,7 @@ namespace {
     check($inspect->data['protocol'] === 'omi-publication-artifact/1', 'Inspection protocol mismatch');
     check($inspect->data['publicationId'] === 13, 'Inspection did not bind current publication');
     check($inspect->data['provenance']['required'] === true, 'Inspection did not require provenance');
-    check(count($inspect->data['formats']) === 4, 'Inspection did not advertise publication formats');
+    check(count($inspect->data['formats']) === 5, 'Inspection did not advertise publication formats');
     check(!State::$files, 'Inspection wrote files');
     $workflow = $controller->workflowStatus(new \Illuminate\Http\Request(['submissionId' => 12]));
     check($workflow->data['authority'] === 'OJS', 'Workflow must identify OJS authority');
