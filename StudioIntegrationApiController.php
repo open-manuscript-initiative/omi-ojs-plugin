@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\DB;
 use PKP\plugins\PluginRegistry;
 use PKP\submissionFile\SubmissionFile;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request as IlluminateRequest;
 use Illuminate\Support\Facades\Route;
 use PKP\config\Config;
@@ -1391,19 +1392,19 @@ class StudioIntegrationApiController extends PKPBaseController
     private function writeWorkflowTranslationMetadata(object $context, object $submission, array $binding, array $translation): array
     {
         $publication = $submission->getCurrentPublication();
-        if (!$publication || (int)$publication->getId() !== (int)($binding['publicationId'] ?? 0)) abort(409, 'The OJS publication version changed. Reconnect the translation task.');
-        if ((int)$publication->getData('status') !== Submission::STATUS_QUEUED || !Repo::submission()->canEditPublication($submission->getId(), (int)$binding['editorId'])) abort(403, 'Translation metadata can be returned only to an editable unpublished OJS version.');
+        if (!$publication || (int)$publication->getId() !== (int)($binding['publicationId'] ?? 0)) throw new HttpResponseException($this->error('publication_changed', 'The OJS publication version changed. Reconnect the translation task.', 409));
+        if ((int)$publication->getData('status') !== Submission::STATUS_QUEUED || !Repo::submission()->canEditPublication($submission->getId(), (int)$binding['editorId'])) throw new HttpResponseException($this->error('publication_not_editable', 'Translation metadata can be returned only to an editable unpublished OJS version.', 403));
         $target = $this->translationLanguage((string)$binding['targetLanguage']);
         $locales = $context->getSupportedSubmissionMetadataLocales();
         $locale = null;
         foreach ($locales as $candidate) if ($this->translationLanguage((string)$candidate) === $target) { $locale = (string)$candidate; break; }
-        if ($locale === null) abort(422, 'Enable the target metadata language in OJS before returning this translation.');
+        if ($locale === null) throw new HttpResponseException($this->error('translation_locale_disabled', 'Enable the target metadata language in OJS before returning this translation.', 422));
         $adapter = new Ojs35Adapter();
         $params = MetadataReconciliation::patch($publication, $locale,
             ['title' => $translation['title'], 'abstract' => $translation['abstract'], 'keywords' => $translation['keywords']],
             $locales, $adapter->reconciliationKeywords($publication, (string)$submission->getData('locale')));
         $params['id'] = (int)$publication->getId(); $params['submissionId'] = (int)$submission->getId();
-        if (Repo::publication()->validate($publication, $params, $submission, $context)) abort(422, 'OJS rejected the translated metadata.');
+        if (Repo::publication()->validate($publication, $params, $submission, $context)) throw new HttpResponseException($this->error('translation_metadata_invalid', 'OJS rejected the translated metadata.', 422));
         Repo::publication()->edit($publication, $params);
         return ['locale' => $locale, 'targetLanguage' => $target, 'publicationExternalId' => (string)$publication->getId(), 'fields' => ['title', 'abstract', 'keywords']];
     }
@@ -1480,6 +1481,7 @@ class StudioIntegrationApiController extends PKPBaseController
         }
         }
         $createdFiles = [];
+        try {
         return DB::transaction(function () use (&$createdFiles, $input, $context, $submission, $submissionId, $externalId, $type, $binding, $review, $roundNumber, $sourceDigest, $documents, $translation, $metadataOnly) {
             try {
                 DB::table('submissions')->where('submission_id', $submissionId)->lockForUpdate()->first();
@@ -1533,7 +1535,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 $receipts = [];
                 foreach ($documents as $document) {
                     $stored = $this->persistWorkflowFile($context, $submission, $uploaderId, $fileStage, $assocType, $assocId, $genreId, $document, []);
-                    if ($stored->getStatusCode() >= 400) abort($stored->getStatusCode(), 'OJS rejected a returned document.');
+                    if ($stored->getStatusCode() >= 400) throw new HttpResponseException($stored);
                     $fileReceipt = $stored->getData(true);
                     $storedFile = Repo::submissionFile()->get((int)$fileReceipt['submissionFileExternalId']);
                     $createdFiles[] = $storedFile->getData('fileId');
@@ -1541,7 +1543,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 }
                 if ($review) {
                     $result = $this->reviewResult($input);
-                    if ($result->getStatusCode() >= 400) abort($result->getStatusCode(), 'OJS rejected the review result.');
+                    if ($result->getStatusCode() >= 400) throw new HttpResponseException($result);
                     Repo::reviewAssignment()->edit(Repo::reviewAssignment()->get((int)$externalId, $submissionId), ['dateCompleted' => Core::getCurrentDate()]);
                 } else {
                     $this->saveWorkflowComment($context, $submission, $uploaderId, (int)$binding['editorId'], $externalId, (string)$input->input('authorAndEditorComment', ''), true);
@@ -1558,6 +1560,10 @@ class StudioIntegrationApiController extends PKPBaseController
                 throw $error;
             }
         });
+        } catch (HttpResponseException $error) {
+            // Return the original validation response only after rollback.
+            return $error->getResponse();
+        }
     }
 
     private function saveWorkflowComment(object $context, object $submission, int $userId, int $editorId, string $assignmentId, string $body, bool $viewable): void
@@ -1918,9 +1924,11 @@ class StudioIntegrationApiController extends PKPBaseController
                 'submissionId' => (int)$submission->getId(),
                 'uploaderUserId' => $uploaderUserId,
                 'fileStage' => $fileStage,
-                'genreId' => $genreId,
-                'assocType' => $assocType,
-                'assocId' => $assocId,
+                // PKP's optional genreId is an integer, not nullable. Review
+                // attachments have no genre. Ordinary submission-stage files
+                // already belong to the submission through submissionId.
+                ...($genreId !== null ? ['genreId' => $genreId] : []),
+                ...($assocType !== Application::ASSOC_TYPE_SUBMISSION ? ['assocType' => $assocType, 'assocId' => $assocId] : []),
                 'name' => [
                     $submission->getData('locale') => $document['fileName'],
                 ],
