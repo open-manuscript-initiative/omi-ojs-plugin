@@ -85,6 +85,9 @@ jobs:
       - name: Check native revision writeback contract
         run: php tests/revision-writeback-contract.php
 
+      - name: Check scientific, language and translation writeback
+        run: php tests/role-writeback.php
+
       - name: Check native planned issue launcher
         run: php tests/planned-issue-launcher.php
 

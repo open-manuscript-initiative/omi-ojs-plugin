@@ -511,7 +511,7 @@ class StudioIntegrationPlugin extends GenericPlugin
         if (!($reviewAssignment instanceof ReviewAssignment)) {
             return null;
         }
-        if ($reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) {
+        if ($reviewAssignment->getCancelled() || $reviewAssignment->getDeclined() || $reviewAssignment->getDateCompleted()) {
             return null;
         }
 
@@ -665,7 +665,7 @@ class StudioIntegrationPlugin extends GenericPlugin
             return false;
         }
 
-        if ($reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) {
+        if ($reviewAssignment->getCancelled() || $reviewAssignment->getDeclined() || $reviewAssignment->getDateCompleted()) {
             return false;
         }
 

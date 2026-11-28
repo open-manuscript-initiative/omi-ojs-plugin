@@ -29,6 +29,7 @@ use PKP\db\DAORegistry;
 use PKP\reviewForm\ReviewFormElement;
 use PKP\reviewForm\ReviewFormResponse;
 use PKP\security\Role;
+use PKP\stageAssignment\StageAssignment;
 use PKP\submission\ReviewFilesDAO;
 use PKP\submission\SubmissionComment;
 use PKP\submission\reviewAssignment\ReviewAssignment;
@@ -80,6 +81,8 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
         Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
+        Route::post('workflow-assignment', $this->workflowAssignment(...))->name('api.omiIntegration.workflowAssignment');
+        Route::post('assignment-result', $this->assignmentResult(...))->name('api.omiIntegration.assignmentResult');
         Route::post('review-file', $this->reviewFile(...))->name('api.omiIntegration.reviewFile');
         Route::post('author-revision', $this->authorRevision(...))->name('api.omiIntegration.authorRevision');
         Route::post('html-galley', $this->htmlGalley(...))
@@ -989,7 +992,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.10.0',
+                'version' => '1.12.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -1014,6 +1017,8 @@ class StudioIntegrationApiController extends PKPBaseController
                 'review.form.write',
                 'review.forms.native',
                 'review.files.scoped',
+                'workflow.assignment.write',
+                'workflow.assignment-result.write',
                 'editor.html-galley.write',
                 'editor.publication-artifact.write',
                 'publication.html.write',
@@ -1068,7 +1073,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'protocol' => 'omi-integration/1',
             'installationId' => $this->plugin->getInstallationId($context->getId(), Application::get()->getRequest()),
             'context' => $this->contextData($context),
-            'submission' => $adapter->mapSubmission($submission),
+            'submission' => array_merge($adapter->mapSubmission($submission), ['publicationLanguages' => $this->workflowPublicationLanguages($context, $submission)]),
             'actor' => $actor,
         ]);
     }
@@ -1098,7 +1103,7 @@ class StudioIntegrationApiController extends PKPBaseController
             return $this->error('insufficient_scope', 'The signed assertion does not grant access to reviewer identities.', 403, ['required' => 'review.identity.read']);
         }
 
-        $userGroupIds = Repo::userGroup()->getArrayIdByRoleId(Role::ROLE_ID_REVIEWER, $context->getId());
+        $userGroupIds = array_merge(Repo::userGroup()->getArrayIdByRoleId(Role::ROLE_ID_REVIEWER, $context->getId()), Repo::userGroup()->getArrayIdByRoleId(Role::ROLE_ID_ASSISTANT, $context->getId()));
         $reviewers = [];
         if ($userGroupIds) {
             $users = Repo::user()->getCollector()
@@ -1193,16 +1198,14 @@ class StudioIntegrationApiController extends PKPBaseController
         $assignment = $this->reviewAssignmentForClaims($claims, $submissionId);
         if (!$assignment) return $this->error('review_assignment_forbidden', 'The review assignment is not valid for this reviewer and submission.', 403);
 
-        $formId = (int)$assignment->getData('reviewFormId');
-        if ($formId < 1) {
-            return response()->json([
-                'protocol' => 'omi-integration/1',
-                'submissionExternalId' => (string)$submissionId,
-                'reviewAssignmentExternalId' => (string)$assignment->getId(),
-                'reviewForm' => null,
-            ]);
-        }
+        return response()->json(['protocol' => 'omi-integration/1', 'submissionExternalId' => (string)$submissionId,
+            'reviewAssignmentExternalId' => (string)$assignment->getId(), 'reviewForm' => $this->workflowReviewForm($assignment)]);
+    }
 
+    private function workflowReviewForm(ReviewAssignment $assignment): ?array
+    {
+        $formId = (int)$assignment->getData('reviewFormId');
+        if ($formId < 1) return null;
         /** @var \PKP\reviewForm\ReviewFormElementDAO $elementDao */
         $elementDao = DAORegistry::getDAO('ReviewFormElementDAO');
         /** @var \PKP\reviewForm\ReviewFormResponseDAO $responseDao */
@@ -1228,15 +1231,7 @@ class StudioIntegrationApiController extends PKPBaseController
             ];
         }
 
-        return response()->json([
-            'protocol' => 'omi-integration/1',
-            'submissionExternalId' => (string)$submissionId,
-            'reviewAssignmentExternalId' => (string)$assignment->getId(),
-            'reviewForm' => [
-                'externalId' => (string)$formId,
-                'elements' => $elements,
-            ],
-        ]);
+        return ['externalId' => (string)$formId, 'elements' => $elements];
     }
 
     public function fileContent(IlluminateRequest $illuminateRequest): BinaryFileResponse|JsonResponse
@@ -1283,6 +1278,305 @@ class StudioIntegrationApiController extends PKPBaseController
         ]);
     }
 
+    /** Bind Studio tasks to native OJS review/stage permissions before inviting a participant. */
+    public function workflowAssignment(IlluminateRequest $input): JsonResponse
+    {
+        $context = Application::get()->getRequest()->getContext();
+        if (!$context) return $this->error('context_required', 'A journal context is required.', 400);
+        if ($error = $this->authorizeServiceRequest($input, $context->getId())) return $error;
+        $submission = Repo::submission()->get((int)$input->input('submissionExternalId'), $context->getId());
+        if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
+        $editorId = (int)$input->input('editorExternalId');
+        if (!$this->workflowEditorAllowed($context, $submission, $editorId)) return $this->error('editor_required', 'Current editorial access to this submission is required.', 403);
+        $id = (string)$input->input('assignmentId');
+        $type = (string)$input->input('assignmentType');
+        if (!preg_match('/^[a-f0-9-]{36}$/i', $id) || !in_array($type, ['SCIENTIFIC_REVIEW', 'LANGUAGE_REVIEW', 'TRANSLATION'], true)) {
+            return $this->error('invalid_assignment', 'A valid task identifier and role are required.', 422);
+        }
+        if ($type === 'TRANSLATION') {
+            try {
+                $sourceLanguage = $this->translationLanguage((string)$input->input('sourceLanguage'));
+                $targetLanguage = $this->translationLanguage((string)$input->input('targetLanguage'));
+            } catch (\InvalidArgumentException) { return $this->error('invalid_languages', 'Valid translation languages are required.', 422); }
+            if ($sourceLanguage === $targetLanguage) return $this->error('invalid_languages', 'Translation requires distinct source and target languages.', 422);
+            $supportedTargets = array_map($this->translationLanguage(...), $context->getSupportedSubmissionMetadataLocales());
+            if (!in_array($targetLanguage, $supportedTargets, true)) return $this->error('unsupported_target_language', 'Enable the translation target metadata language in OJS first.', 422);
+        }
+        $participant = Repo::user()->getByEmail(strtolower(trim((string)$input->input('reviewerEmail'))));
+        if (!$participant) return $this->error('participant_not_found', 'An active OJS participant account is required.', 422);
+        $groupIds = Repo::userGroup()->getArrayIdByRoleId(Role::ROLE_ID_REVIEWER, $context->getId());
+        if ($type !== 'SCIENTIFIC_REVIEW') $groupIds = array_merge($groupIds, Repo::userGroup()->getArrayIdByRoleId(Role::ROLE_ID_ASSISTANT, $context->getId()));
+        if (!$groupIds) return $this->error('participant_not_available', 'No eligible participant group is available.', 403);
+        $member = Repo::user()->getCollector()->filterByContextIds([$context->getId()])->filterByUserGroupIds($groupIds)->getMany()->first(fn ($user) => (int)$user->getId() === (int)$participant->getId());
+        if (!$member) return $this->error('participant_not_available', 'Select an eligible participant from this journal.', 403);
+        return DB::transaction(function () use ($input, $context, $submission, $editorId, $participant, $id, $type) {
+            DB::table('submissions')->where('submission_id', $submission->getId())->lockForUpdate()->first();
+            $submission = Repo::submission()->get((int)$submission->getId(), $context->getId());
+            if (!$this->workflowEditorAllowed($context, $submission, $editorId)) return $this->error('editor_required', 'Editorial permissions changed.', 403);
+            $stage = (int)$submission->getData('stageId');
+            $round = null;
+            if ($stage === WORKFLOW_STAGE_ID_EXTERNAL_REVIEW) $round = DAORegistry::getDAO('ReviewRoundDAO')->getLastReviewRoundBySubmissionId($submission->getId(), WORKFLOW_STAGE_ID_EXTERNAL_REVIEW);
+            if ($input->input('expectedReviewRound') !== null && (int)$input->input('expectedReviewRound') !== ($round ? (int)$round->getRound() : 1)) return $this->error('review_round_changed', 'The current OJS round differs from this task. Create a new task.', 409);
+            $publicationLanguages = $this->workflowPublicationLanguages($context, $submission);
+            if ($type === 'TRANSLATION' && $input->input('publicationLanguages') !== null) {
+                $requested = $input->input('publicationLanguages');
+                if (!is_array($requested) || count($requested) > 32) return $this->error('invalid_publication_languages', 'Specify full-text publication languages.', 422);
+                foreach ($requested as $language) $publicationLanguages[] = $this->translationLanguage((string)$language);
+                $publicationLanguages = array_values(array_unique($publicationLanguages));
+                $publication = $submission->getCurrentPublication();
+                $this->plugin->updateSetting($context->getId(), 'translationPublicationLanguages_' . ($publication ? $publication->getId() : $submission->getId()), $publicationLanguages, 'object');
+            }
+            $externalId = 'workflow-' . $id;
+            if ($type === 'SCIENTIFIC_REVIEW') {
+                if (!$round) return $this->error('review_round_required', 'Scientific peer review requires an active external review round.', 409);
+                $authorRoles = Repo::user()->getAccessibleWorkflowStages($participant->getId(), $context->getId(), $submission);
+                foreach ($authorRoles as $roles) if (in_array(Role::ROLE_ID_AUTHOR, $roles, true)) return $this->error('reviewer_is_author', 'An author cannot review their own submission.', 403);
+                $assignment = Repo::reviewAssignment()->getCollector()->filterByReviewRoundIds([$round->getId()])->filterByReviewerIds([$participant->getId()])->getMany()->first();
+                if ($assignment) {
+                    if ((int)$assignment->getReviewMethod() !== ReviewAssignment::SUBMISSION_REVIEW_METHOD_DOUBLEANONYMOUS || !$this->reviewAssignmentAllowsFileWrite($assignment)) {
+                        return $this->error('review_assignment_conflict', 'The existing review assignment is not writable double-anonymous peer review.', 409);
+                    }
+                    $externalId = (string)$assignment->getId();
+                } else {
+                    $params = ['submissionId' => (int)$submission->getId(), 'reviewerId' => (int)$participant->getId(),
+                        'reviewRoundId' => (int)$round->getId(), 'round' => (int)$round->getRound(), 'stageId' => WORKFLOW_STAGE_ID_EXTERNAL_REVIEW,
+                        'reviewMethod' => ReviewAssignment::SUBMISSION_REVIEW_METHOD_DOUBLEANONYMOUS, 'dateAssigned' => Core::getCurrentDate()];
+                    $reviewWeeks = (int)$context->getData('numWeeksPerReview');
+                    $responseWeeks = (int)$context->getData('numWeeksPerResponse');
+                    $params['dateDue'] = date('Y-m-d 23:59:59', strtotime('+' . ($reviewWeeks > 0 ? $reviewWeeks : 4) . ' weeks'));
+                    $params['dateResponseDue'] = date('Y-m-d 23:59:59', strtotime('+' . ($responseWeeks > 0 ? $responseWeeks : 3) . ' weeks'));
+                    $publication = $submission->getCurrentPublication();
+                    $sectionId = $publication ? (int)$publication->getData(Application::getSectionIdPropName()) : 0;
+                    $section = $sectionId ? Repo::section()->get($sectionId, $context->getId()) : null;
+                    if ($section && $section->getReviewFormId()) $params['reviewFormId'] = (int)$section->getReviewFormId();
+                    if (Repo::reviewAssignment()->validate(null, $params, $context)) return $this->error('assignment_validation_failed', 'OJS rejected the review assignment.', 422);
+                    $externalId = (string)Repo::reviewAssignment()->add(Repo::reviewAssignment()->newDataObject($params));
+                }
+            }
+            $binding = ['contextId' => (int)$context->getId(), 'submissionId' => (int)$submission->getId(),
+                'editorId' => $editorId, 'participantId' => (int)$participant->getId(), 'assignmentId' => $externalId,
+                'assignmentType' => $type, 'stageId' => $stage,
+                'publicationId' => $submission->getCurrentPublication()?->getId(),
+                'publicationLanguages' => $publicationLanguages,
+                ...($type === 'TRANSLATION' ? ['sourceLanguage' => $this->translationLanguage((string)$input->input('sourceLanguage')), 'targetLanguage' => $this->translationLanguage((string)$input->input('targetLanguage'))] : []), 'reviewRoundId' => $round ? (int)$round->getId() : null,
+                'reviewRound' => $round ? (int)$round->getRound() : 1];
+            $payload = rtrim(strtr(base64_encode(json_encode($binding, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+            $signature = hash_hmac('sha256', 'workflow-assignment/1.' . $payload, (string)$this->plugin->getSetting($context->getId(), 'sharedSecret'));
+            return response()->json(['externalAssignmentId' => $externalId, 'reviewRound' => $binding['reviewRound'],
+                'publicationLanguages' => $publicationLanguages, 'anonymityMode' => $type === 'SCIENTIFIC_REVIEW' ? 'double_blind' : 'open', 'assignmentToken' => $payload . '.' . $signature,
+                ...($type === 'SCIENTIFIC_REVIEW' ? ['recommendations' => $this->reviewerRecommendationCatalog($context, Repo::reviewAssignment()->get((int)$externalId, $submission->getId())), 'reviewForm' => $this->workflowReviewForm(Repo::reviewAssignment()->get((int)$externalId, $submission->getId()))] : [])]);
+        });
+    }
+
+    private function translationLanguage(string $value): string
+    {
+        if (!preg_match('/^([a-z]{2,8})(?:[-_]([a-z]{4}))?(?:[-_](?:[a-z]{2}|[0-9]{3}))?$/i', trim($value), $parts)) throw new \InvalidArgumentException('Invalid translation language.');
+        return strtolower($parts[1]) . (!empty($parts[2]) ? '-' . ucfirst(strtolower($parts[2])) : '');
+    }
+
+    /** Actual/planned full-text languages, never the metadata-locale list. */
+    private function workflowPublicationLanguages(object $context, object $submission): array
+    {
+        $publication = $submission->getCurrentPublication();
+        $id = $publication ? (int)$publication->getId() : (int)$submission->getId();
+        $languages = [$this->translationLanguage((string)$submission->getData('locale'))];
+        foreach ((array)$this->plugin->getSetting($context->getId(), 'translationPublicationLanguages_' . $id) as $language) $languages[] = $this->translationLanguage((string)$language);
+        if ($publication) foreach (Repo::galley()->getCollector()->filterByPublicationIds([$publication->getId()])->getMany() as $galley) {
+            $locale = $galley->getData('locale');
+            if (is_string($locale) && $locale !== '') $languages[] = $this->translationLanguage($locale);
+        }
+        return array_values(array_unique($languages));
+    }
+
+    private function writeWorkflowTranslationMetadata(object $context, object $submission, array $binding, array $translation): array
+    {
+        $publication = $submission->getCurrentPublication();
+        if (!$publication || (int)$publication->getId() !== (int)($binding['publicationId'] ?? 0)) abort(409, 'The OJS publication version changed. Reconnect the translation task.');
+        if ((int)$publication->getData('status') !== Submission::STATUS_QUEUED || !Repo::submission()->canEditPublication($submission->getId(), (int)$binding['editorId'])) abort(403, 'Translation metadata can be returned only to an editable unpublished OJS version.');
+        $target = $this->translationLanguage((string)$binding['targetLanguage']);
+        $locales = $context->getSupportedSubmissionMetadataLocales();
+        $locale = null;
+        foreach ($locales as $candidate) if ($this->translationLanguage((string)$candidate) === $target) { $locale = (string)$candidate; break; }
+        if ($locale === null) abort(422, 'Enable the target metadata language in OJS before returning this translation.');
+        $adapter = new Ojs35Adapter();
+        $params = MetadataReconciliation::patch($publication, $locale,
+            ['title' => $translation['title'], 'abstract' => $translation['abstract'], 'keywords' => $translation['keywords']],
+            $locales, $adapter->reconciliationKeywords($publication, (string)$submission->getData('locale')));
+        $params['id'] = (int)$publication->getId(); $params['submissionId'] = (int)$submission->getId();
+        if (Repo::publication()->validate($publication, $params, $submission, $context)) abort(422, 'OJS rejected the translated metadata.');
+        Repo::publication()->edit($publication, $params);
+        return ['locale' => $locale, 'targetLanguage' => $target, 'publicationExternalId' => (string)$publication->getId(), 'fields' => ['title', 'abstract', 'keywords']];
+    }
+
+    private function workflowEditorAllowed(object $context, object $submission, int $editorId): bool
+    {
+        if ($editorId < 1 || !Repo::user()->get($editorId)) return false;
+        $stages = Repo::user()->getAccessibleWorkflowStages($editorId, $context->getId(), $submission);
+        return (bool)array_intersect($stages[(int)$submission->getData('stageId')] ?? [], [Role::ROLE_ID_MANAGER, Role::ROLE_ID_SUB_EDITOR, Role::ROLE_ID_ASSISTANT]);
+    }
+
+    /** Atomic, idempotent return of the shareable Word revision and exact structured snapshot. */
+    public function assignmentResult(IlluminateRequest $input): JsonResponse
+    {
+        $context = Application::get()->getRequest()->getContext();
+        if (!$context) return $this->error('context_required', 'A journal context is required.', 400);
+        if ($error = $this->authorizeServiceRequest($input, $context->getId())) return $error;
+        $submissionId = (int)$input->input('submissionExternalId');
+        $submission = Repo::submission()->get($submissionId, $context->getId());
+        if (!$submission) return $this->error('submission_not_found', 'Submission not found.', 404);
+        $externalId = (string)$input->input('reviewAssignmentExternalId');
+        $type = (string)$input->input('assignmentType');
+        $roundNumber = (int)$input->input('reviewRound');
+        $sourceDigest = (string)$input->input('sourceDigest');
+        if (!preg_match('/^[a-f0-9]{64}$/', $sourceDigest) || $roundNumber < 1) return $this->error('invalid_result', 'A content digest and review round are required.', 422);
+        $binding = null;
+        $token = $input->input('assignmentToken');
+        if ($token !== null) {
+            $parts = is_string($token) ? explode('.', $token) : [];
+            if (count($parts) !== 2 || !hash_equals(hash_hmac('sha256', 'workflow-assignment/1.' . $parts[0], (string)$this->plugin->getSetting($context->getId(), 'sharedSecret')), $parts[1])) return $this->error('invalid_assignment_token', 'The task binding is invalid.', 403);
+            $decoded = base64_decode(strtr($parts[0], '-_', '+/'), true);
+            $binding = $decoded === false ? null : json_decode($decoded, true);
+            if (!is_array($binding) || ($binding['contextId'] ?? null) !== (int)$context->getId() || ($binding['submissionId'] ?? null) !== $submissionId || ($binding['assignmentId'] ?? null) !== $externalId || ($binding['assignmentType'] ?? null) !== $type || ($binding['reviewRound'] ?? null) !== $roundNumber) return $this->error('assignment_mismatch', 'The task belongs to another journal, submission, role or round.', 403);
+            if (!$this->workflowEditorAllowed($context, $submission, (int)$binding['editorId']) || !Repo::user()->get((int)$binding['participantId'])) return $this->error('assignment_revoked', 'The editorial task is no longer authorized.', 403);
+        }
+        $review = null;
+        if ($type === 'SCIENTIFIC_REVIEW') {
+            $review = ctype_digit($externalId) ? Repo::reviewAssignment()->get((int)$externalId, $submissionId) : null;
+            if (!$review || (int)$review->getRound() !== $roundNumber || (int)$review->getReviewMethod() !== ReviewAssignment::SUBMISSION_REVIEW_METHOD_DOUBLEANONYMOUS || ($binding && (int)$review->getReviewerId() !== (int)$binding['participantId'])) return $this->error('review_assignment_mismatch', 'A double-anonymous review assignment in the requested round is required.', 403);
+            $nativeRound = DAORegistry::getDAO('ReviewRoundDAO')->getById((int)$review->getReviewRoundId());
+            if (!$nativeRound || (int)$nativeRound->getSubmissionId() !== $submissionId || (int)$nativeRound->getStageId() !== WORKFLOW_STAGE_ID_EXTERNAL_REVIEW) return $this->error('review_round_mismatch', 'The review round does not belong to this submission.', 409);
+        } elseif (!$binding || !in_array($type, ['LANGUAGE_REVIEW', 'TRANSLATION'], true)) return $this->error('assignment_required', 'A bound language review or translation task is required.', 403);
+        $files = $input->input('files');
+        $translation = $type === 'TRANSLATION' ? $input->input('translationMetadata') : null;
+        $metadataOnly = false;
+        if ($type === 'TRANSLATION') {
+            if (!is_array($translation) || !is_string($translation['targetLanguage'] ?? null) || $this->translationLanguage($translation['targetLanguage']) !== ($binding['targetLanguage'] ?? null) || !is_string($translation['sourceLanguage'] ?? null) || $this->translationLanguage($translation['sourceLanguage']) !== ($binding['sourceLanguage'] ?? null)) return $this->error('translation_pair_mismatch', 'The translated metadata belongs to another language pair.', 422);
+            foreach (['title', 'abstract'] as $field) if (!is_string($translation[$field] ?? null) || trim($translation[$field]) === '') return $this->error('translation_metadata_required', 'Translated title, abstract and keywords are all required.', 422);
+            if (!is_array($translation['keywords'] ?? null) || !array_is_list($translation['keywords']) || !$translation['keywords'] || count($translation['keywords']) > 100) return $this->error('translation_metadata_required', 'Translated keywords are required.', 422);
+            foreach ($translation['keywords'] as $term) if (!is_string($term) || trim($term) === '' || mb_strlen($term) > 200) return $this->error('translation_metadata_required', 'Translated keywords must be nonempty terms.', 422);
+            $metadataOnly = !in_array($binding['targetLanguage'], $this->workflowPublicationLanguages($context, $submission), true);
+            if (!$metadataOnly && $input->input('documentTranslationCompleted') !== true) return $this->error('document_translation_required', 'Complete the full manuscript translation for this publication language.', 422);
+        }
+        if (!is_array($files) || count($files) !== ($metadataOnly ? 0 : 2)) return $this->error('documents_required', 'Return the Word document and structured snapshot together.', 422);
+        $documents = [];
+        $total = 0;
+        foreach ($files as $file) {
+            if (!is_array($file)) return $this->error('invalid_document', 'Invalid returned document.', 422);
+            try { $document = WorkflowFileDocument::decode((string)($file['fileName'] ?? ''), (string)($file['mediaType'] ?? ''), (string)($file['contentBase64'] ?? '')); }
+            catch (\InvalidArgumentException $e) { return $this->error('invalid_document', $e->getMessage(), 422); }
+            $total += $document['byteLength'];
+            $documents[] = $document;
+        }
+        if (!$metadataOnly && ($total > WorkflowFileDocument::MAX_BYTES || !str_ends_with($documents[0]['fileName'], '.docx') || !str_ends_with($documents[1]['fileName'], '.omi-review.json'))) return $this->error('invalid_documents', 'The document pair exceeds the limit or has incorrect formats.', 422);
+        if (!$metadataOnly) {
+        if ($type === 'TRANSLATION') foreach ($documents as $document) if (!str_starts_with($document['fileName'], 'translation-' . $binding['sourceLanguage'] . '-' . $binding['targetLanguage'] . '-assignment-')) return $this->error('translation_file_language', 'Translation filenames must identify the bound language pair.', 422);
+        $structured = json_decode($documents[1]['bytes'], true);
+        if (!is_array($structured) || ($structured['protocol'] ?? '') !== 'omi-review-revision/1' || ($structured['assignmentType'] ?? '') !== $type || ($structured['anonymityMode'] ?? '') !== ($review ? 'double_blind' : 'open')) return $this->error('invalid_snapshot', 'The structured document does not match this task.', 422);
+        $manuscript = $structured['manuscript'] ?? [];
+        if ($type === 'TRANSLATION' && (($manuscript['translation'] ?? null) !== $translation || empty($manuscript['blocks']))) return $this->error('translation_snapshot_mismatch', 'The translated manuscript must match the translated metadata.', 422);
+        if ($review && (($manuscript['authorIdentity'] ?? '') !== 'hidden' || !empty($manuscript['authors']))) return $this->error('identity_disclosure', 'Scientific review documents must not contain author metadata.', 422);
+        foreach ($manuscript['annotations'] ?? [] as $annotation) {
+            if (($annotation['visibility'] ?? '') !== 'author_and_editor' || ($review && !empty($annotation['authorName']))) return $this->error('private_annotation', 'Shareable files must not contain private annotations or reviewer identity.', 422);
+        }
+        }
+        $createdFiles = [];
+        return DB::transaction(function () use (&$createdFiles, $input, $context, $submission, $submissionId, $externalId, $type, $binding, $review, $roundNumber, $sourceDigest, $documents, $translation, $metadataOnly) {
+            try {
+                DB::table('submissions')->where('submission_id', $submissionId)->lockForUpdate()->first();
+                $receiptKey = 'workflowReceipt_' . hash('sha256', $externalId . ':' . $roundNumber . ($review ? '' : ':' . $sourceDigest));
+                $previous = $this->plugin->getSetting($context->getId(), $receiptKey);
+                if (is_array($previous)) {
+                    if (($previous['sourceDigest'] ?? '') !== $sourceDigest || ($previous['submissionExternalId'] ?? '') !== (string)$submissionId) return $this->error('result_conflict', 'This task was already returned with different content.', 409);
+                    return response()->json(array_merge($previous, ['unchanged' => true]));
+                }
+                $current = Repo::submission()->get($submissionId, $context->getId());
+                if ($binding && !$this->workflowEditorAllowed($context, $current, (int)$binding['editorId'])) return $this->error('assignment_revoked', 'Editorial permissions changed.', 403);
+                if ($binding && (int)$current->getData('stageId') !== (int)$binding['stageId']) return $this->error('workflow_changed', 'The OJS workflow stage changed. Reassign the task before returning it.', 409);
+                if ($binding && (int)$binding['stageId'] === WORKFLOW_STAGE_ID_EXTERNAL_REVIEW) {
+                    $latest = DAORegistry::getDAO('ReviewRoundDAO')->getLastReviewRoundBySubmissionId($submissionId, WORKFLOW_STAGE_ID_EXTERNAL_REVIEW);
+                    if (!$latest || (int)$latest->getId() !== (int)$binding['reviewRoundId']) return $this->error('review_round_changed', 'The current review round changed. Reassign the task.', 409);
+                }
+                $metadataReceipt = null;
+                if ($type === 'TRANSLATION') {
+                    $nowRequired = in_array($binding['targetLanguage'], $this->workflowPublicationLanguages($context, $current), true);
+                    if ($nowRequired === $metadataOnly) return $this->error('translation_scope_changed', 'The publication languages changed. Reconnect the task.', 409);
+                }
+                $genreId = null;
+                if ($review) {
+                    $currentReview = Repo::reviewAssignment()->get((int)$externalId, $submissionId);
+                    if (!$this->reviewAssignmentAllowsFileWrite($currentReview)) return $this->error('review_closed', 'The review assignment is no longer writable.', 409);
+                    $fileStage = SubmissionFile::SUBMISSION_FILE_REVIEW_ATTACHMENT;
+                    $assocType = Application::ASSOC_TYPE_REVIEW_ASSIGNMENT;
+                    $assocId = (int)$externalId;
+                    $uploaderId = (int)$review->getReviewerId();
+                } else {
+                    $stage = (int)$binding['stageId'];
+                    $fileStage = match ($stage) {
+                        WORKFLOW_STAGE_ID_SUBMISSION => SubmissionFile::SUBMISSION_FILE_SUBMISSION,
+                        WORKFLOW_STAGE_ID_EXTERNAL_REVIEW => SubmissionFile::SUBMISSION_FILE_REVIEW_REVISION,
+                        WORKFLOW_STAGE_ID_EDITING => SubmissionFile::SUBMISSION_FILE_COPYEDIT,
+                        WORKFLOW_STAGE_ID_PRODUCTION => SubmissionFile::SUBMISSION_FILE_PRODUCTION_READY,
+                        default => 0,
+                    };
+                    if (!$fileStage) return $this->error('unsupported_stage', 'This workflow stage does not accept returned documents.', 409);
+                    $assocType = $stage === WORKFLOW_STAGE_ID_EXTERNAL_REVIEW ? Application::ASSOC_TYPE_REVIEW_ROUND : Application::ASSOC_TYPE_SUBMISSION;
+                    $assocId = $stage === WORKFLOW_STAGE_ID_EXTERNAL_REVIEW ? (int)$binding['reviewRoundId'] : $submissionId;
+                    $uploaderId = (int)$binding['participantId'];
+                    $genres = $metadataOnly ? null : DAORegistry::getDAO('GenreDAO')->getEnabledByContextId($context->getId());
+                    while ($genres && ($genre = $genres->next())) if (!$genre->getDependent()) {
+                        if ($genreId === null) $genreId = (int)$genre->getId();
+                        if ($genre->getKey() === 'SUBMISSION') { $genreId = (int)$genre->getId(); break; }
+                    }
+                    if (!$metadataOnly && !$genreId) return $this->error('genre_required', 'No enabled manuscript genre is available.', 422);
+                }
+                if ($type === 'TRANSLATION') $metadataReceipt = $this->writeWorkflowTranslationMetadata($context, $current, $binding, $translation);
+                $receipts = [];
+                foreach ($documents as $document) {
+                    $stored = $this->persistWorkflowFile($context, $submission, $uploaderId, $fileStage, $assocType, $assocId, $genreId, $document, []);
+                    if ($stored->getStatusCode() >= 400) abort($stored->getStatusCode(), 'OJS rejected a returned document.');
+                    $fileReceipt = $stored->getData(true);
+                    $storedFile = Repo::submissionFile()->get((int)$fileReceipt['submissionFileExternalId']);
+                    $createdFiles[] = $storedFile->getData('fileId');
+                    $receipts[] = $fileReceipt;
+                }
+                if ($review) {
+                    $result = $this->reviewResult($input);
+                    if ($result->getStatusCode() >= 400) abort($result->getStatusCode(), 'OJS rejected the review result.');
+                    Repo::reviewAssignment()->edit(Repo::reviewAssignment()->get((int)$externalId, $submissionId), ['dateCompleted' => Core::getCurrentDate()]);
+                } else {
+                    $this->saveWorkflowComment($context, $submission, $uploaderId, (int)$binding['editorId'], $externalId, (string)$input->input('authorAndEditorComment', ''), true);
+                    $this->saveWorkflowComment($context, $submission, $uploaderId, (int)$binding['editorId'], $externalId, (string)$input->input('editorOnlyComment', ''), false);
+                }
+                $receipt = ['protocol' => 'omi-assignment-result/1', 'written' => true, 'sourceDigest' => $sourceDigest,
+                    'submissionExternalId' => (string)$submissionId, 'reviewAssignmentExternalId' => $externalId,
+                    'assignmentType' => $type, 'anonymityMode' => $review ? 'double_blind' : 'open', 'files' => $receipts, 'translationMetadata' => $metadataReceipt];
+                $this->plugin->updateSetting($context->getId(), $receiptKey, $receipt, 'object');
+                return response()->json($receipt);
+            } catch (\Throwable $error) {
+                // Delete bytes while their native file rows still exist in this transaction.
+                foreach ($createdFiles as $fileId) app()->get('file')->delete($fileId);
+                throw $error;
+            }
+        });
+    }
+
+    private function saveWorkflowComment(object $context, object $submission, int $userId, int $editorId, string $assignmentId, string $body, bool $viewable): void
+    {
+        if (trim($body) === '') return;
+        $participants = [$editorId, $userId];
+        if ($viewable) {
+            $authors = StageAssignment::withSubmissionIds([$submission->getId()])->withRoleIds([Role::ROLE_ID_AUTHOR])
+                ->withStageIds([(int)$submission->getData('stageId')])->get()->pluck('user_id')->all();
+            $participants = array_merge($participants, $authors);
+        }
+        // Native OJS 3.5 discussions are visible in the actual workflow UI.
+        // Separate participant sets enforce confidentiality; no mail is sent here.
+        Repo::query()->addQuery((int)$submission->getId(), (int)$submission->getData('stageId'),
+            'Open Manuscript task ' . $assignmentId . ($viewable ? '' : ' — editor only'),
+            nl2br(htmlspecialchars($body, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')),
+            Repo::user()->get($userId), array_values(array_unique($participants)), (int)$context->getId(), false);
+    }
+
     public function reviewResult(IlluminateRequest $illuminateRequest): JsonResponse
     {
         $context = Application::get()->getRequest()->getContext();
@@ -1295,7 +1589,7 @@ class StudioIntegrationApiController extends PKPBaseController
         if ($submissionId < 1 || $reviewAssignmentId < 1) return $this->error('invalid_review_result', 'A valid submission and review assignment are required.', 400);
 
         $reviewAssignment = Repo::reviewAssignment()->get($reviewAssignmentId, $submissionId);
-        if (!($reviewAssignment instanceof ReviewAssignment) || $reviewAssignment->getCancelled() || $reviewAssignment->getDeclined()) {
+        if (!($reviewAssignment instanceof ReviewAssignment) || $reviewAssignment->getCancelled() || $reviewAssignment->getDeclined() || $reviewAssignment->getDateCompleted()) {
             return $this->error('review_assignment_not_found', 'Review assignment not found or no longer writable.', 404);
         }
         $submission = Repo::submission()->get($submissionId, $context->getId());
@@ -1321,7 +1615,7 @@ class StudioIntegrationApiController extends PKPBaseController
             if ($recommendationWriteback instanceof JsonResponse) return $recommendationWriteback;
         }
 
-        if ($authorComment === '' && $editorComment === '' && $recommendation === '' && $recommendationWriteback === null && $validatedFormResponses === []) {
+        if ($authorComment === '' && $editorComment === '' && $recommendation === '' && $recommendationWriteback === null && $validatedFormResponses === [] && !is_array($illuminateRequest->input('files'))) {
             return $this->error('empty_review_result', 'The review result does not contain any writable content.', 400);
         }
 
@@ -1574,7 +1868,7 @@ class StudioIntegrationApiController extends PKPBaseController
 
     private function reviewAssignmentAllowsFileWrite(ReviewAssignment $assignment): bool
     {
-        return !in_array(
+        return !$assignment->getDateCompleted() && !in_array(
             $assignment->getStatus(),
             [
                 ReviewAssignment::REVIEW_ASSIGNMENT_STATUS_DECLINED,
@@ -1915,7 +2209,7 @@ class StudioIntegrationApiController extends PKPBaseController
         $assignment = Repo::reviewAssignment()->get($assignmentId, $submissionId);
         if (!($assignment instanceof ReviewAssignment)) return null;
         if ((int)$assignment->getSubmissionId() !== $submissionId || (int)$assignment->getReviewerId() !== $actorId) return null;
-        if ($assignment->getCancelled() || $assignment->getDeclined()) return null;
+        if ($assignment->getCancelled() || $assignment->getDeclined() || $assignment->getDateCompleted()) return null;
         return $assignment;
     }
 
@@ -2016,6 +2310,7 @@ class StudioIntegrationApiController extends PKPBaseController
         if (!$claims) return $this->error('invalid_assertion', 'The signed OMI assertion is invalid or expired.', 401);
         $submissionId = (int)($claims['submission']['externalId'] ?? 0);
         if ($submissionId < 1) return $this->error('submission_required', 'The assertion does not identify a submission.', 400);
+        if (($claims['actorMode'] ?? '') === 'review' && !$this->reviewAssignmentForClaims($claims, $submissionId)) return $this->error('review_closed', 'This review is closed. Document access is no longer available.', 403);
         return [$claims, $submissionId, $context];
     }
 

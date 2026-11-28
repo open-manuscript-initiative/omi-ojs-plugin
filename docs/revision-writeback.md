@@ -125,3 +125,18 @@ is available.
 These capabilities permit file return only within the native OJS workflow
 boundaries described above. They do not grant unrestricted submission-file
 write access.
+
+
+## Role-specific return (1.11.0)
+
+Studio uses `POST workflow-assignment` to establish a task binding before creating an invitation. The service request is signed using the existing installation HMAC. OJS independently verifies the current editor, submission, participant and workflow stage. Scientific review is always `SUBMISSION_REVIEW_METHOD_DOUBLEANONYMOUS`; it uses an existing writable native assignment in the current round or creates one with the journal's due-date defaults and section review form. Language review and translation use open collaboration and a signed role-specific binding. Reviewers and journal assistants are available for open tasks.
+
+`POST assignment-result` returns both a corrected DOCX and a paired `.omi-review.json` snapshot. A successful result includes both native submission-file IDs and SHA-256 digests. Files, comments/discussions, completion and the receipt are committed together under a submission lock. Repeating the same result returns the existing receipt; changing an already submitted scientific review yields HTTP 409. Open collaborators may return additional revisions until editorial completion; each revision has a separate duplicate-safe receipt. Failure of either file or native feedback rolls the operation back and cleans up physical files.
+
+Scientific documents contain neither author metadata nor comment-author/account identities. Confidential annotations are excluded from both shareable files and written only to the native editor-only peer-review comment. Open-task authors and participant identities remain visible. Open feedback is stored in native OJS 3.5 discussions: a public discussion includes the assigned authors, sponsoring editor and participant, while the private discussion excludes other authors. No email is sent by this callback.
+
+Open-task files follow the bound native stage: submission files in submission, review revisions in external review, copyedited files in editing and production-ready files in production. The original manuscript is preserved. Scientific review submission closes manuscript access, including stale reviewer launch assertions. Translator/language-review access remains open until Studio editorial completion, and later open-task revisions create additional native versions. A workflow-stage or review-round change requires a new authorized binding; a task cannot silently cross review rounds. Native scientific reviewer file access continues to follow the OJS review-round file selection.
+
+Install the matching Studio change and apply its `20261128040000_ojs_role_writeback` migration. Update the plugin first. Existing tasks created before external binding was stored can be repaired by the editor from Studio's OJS participant panel, using **Restore OJS connection**. The participant can then retry returning a locally submitted task. This restores the connection without discarding an existing local revision. Historical data already discarded by older imports cannot be reconstructed automatically.
+
+Tests: `php tests/role-writeback.php` exercises the actual controller against in-memory native repositories. Native OJS database/workflow acceptance remains a separate deployment check.
