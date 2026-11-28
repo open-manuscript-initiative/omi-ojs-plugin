@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.12.0.0 — 2026-11-28
+
+- Bind translation tasks to a source/target language pair and the current OJS publication version.
+- Require translated title, abstract and keywords and update only the target native metadata locale.
+- Separate metadata-only work from full manuscript translation using actual/planned full-text publication languages.
+- Reject incomplete full-text translation, wrong language pairs and changed publication scope.
+- Preserve source and other localized metadata; metadata-only tasks do not upload manuscript files.
+
+## 1.11.0.0 — 2026-11-28
+
+- Bind Studio scientific reviews to native OJS double-anonymous review assignments and native review forms/recommendations.
+- Return language review and translation as open workflow tasks, with files stored in the current native workflow stage.
+- Receive the corrected DOCX and exact structured review snapshot atomically, with checksummed receipts and duplicate-safe retries.
+- Keep confidential peer-review notes in native editor-only comments; open tasks use native OJS discussions with separate author/editor participant sets.
+- Recheck submission, role, review round and current editorial authorization before storing a task result.
+- Close scientific reviewer launch/file access after submission; retain versioned open collaboration until editorial completion.
+
+
 ## 1.10.0.0 — 2026-11-27
 
 - Extend planned-issue manifests with native imprint and editorial masthead metadata, retaining multilingual values (#53).
