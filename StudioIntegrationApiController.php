@@ -82,6 +82,7 @@ class StudioIntegrationApiController extends PKPBaseController
             ->whereNumber('submissionFileId')
             ->name('api.omiIntegration.fileContent');
         Route::post('review-result', $this->reviewResult(...))->name('api.omiIntegration.reviewResult');
+        Route::post('work-contexts', $this->workContexts(...))->name('api.omiIntegration.workContexts');
         Route::post('workflow-assignment', $this->workflowAssignment(...))->name('api.omiIntegration.workflowAssignment');
         Route::post('assignment-result', $this->assignmentResult(...))->name('api.omiIntegration.assignmentResult');
         Route::post('review-file', $this->reviewFile(...))->name('api.omiIntegration.reviewFile');
@@ -993,7 +994,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.12.0',
+                'version' => '1.13.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
@@ -1280,6 +1281,58 @@ class StudioIntegrationApiController extends PKPBaseController
     }
 
     /** Bind Studio tasks to native OJS review/stage permissions before inviting a participant. */
+    /** Read-only bibliographic grouping for the participant's signed work statement. */
+    public function workContexts(IlluminateRequest $input): JsonResponse
+    {
+        $context = Application::get()->getRequest()->getContext();
+        if (!$context) return $this->error('context_required', 'A publishing context is required.', 400);
+        if ($error = $this->authorizeServiceRequest($input, (int)$context->getId())) return $error;
+        $tasks = $input->input('tasks');
+        if (!is_array($tasks) || !array_is_list($tasks) || count($tasks) < 1 || count($tasks) > 100) return $this->error('invalid_tasks', 'Provide at most 100 bound tasks.', 422);
+        $result = [];
+        foreach ($tasks as $task) {
+            if (!is_array($task) || !is_string($task['assignmentToken'] ?? null) || strlen($task['assignmentToken']) > 32000 || !preg_match('/^[a-f0-9-]{36}$/i', (string)($task['localId'] ?? ''))) return $this->error('invalid_task', 'A bound task is required.', 422);
+            $parts = explode('.', $task['assignmentToken']);
+            if (count($parts) !== 2 || !hash_equals(hash_hmac('sha256', 'workflow-assignment/1.' . $parts[0], (string)$this->plugin->getSetting($context->getId(), 'sharedSecret')), $parts[1])) return $this->error('invalid_assignment_token', 'Invalid task binding.', 403);
+            $decoded = base64_decode(strtr($parts[0], '-_', '+/'), true);
+            $binding = $decoded === false ? null : json_decode($decoded, true);
+            $submissionId = (int)($task['submissionExternalId'] ?? 0);
+            if (!is_array($binding) || ($binding['contextId'] ?? null) !== (int)$context->getId() || ($binding['submissionId'] ?? null) !== $submissionId || ($binding['assignmentId'] ?? null) !== 'workflow-' . $task['localId'] || !in_array($binding['assignmentType'] ?? '', ['LANGUAGE_REVIEW', 'TRANSLATION'], true)) return $this->error('assignment_mismatch', 'The task belongs to another context, submission or role.', 403);
+            $submission = Repo::submission()->get($submissionId, (int)$context->getId());
+            $participant = Repo::user()->get((int)($binding['participantId'] ?? 0));
+            $publication = $submission ? Repo::publication()->get((int)($binding['publicationId'] ?? 0), $submissionId) : null;
+            $allowed = $submission && $participant && !$participant->getData('disabled') && $this->workflowEditorAllowed($context, $submission, (int)($binding['editorId'] ?? 0));
+            $result[] = ['localId' => $task['localId'], 'context' => $allowed ? $this->workAccountingContext($context, $submission, $publication, (int)($binding['chapterId'] ?? 0)) : null];
+        }
+        return response()->json(['protocol' => 'omi-work-contexts/1', 'contexts' => $result]);
+    }
+
+    private function accountingText(mixed $value, string $locale): string
+    {
+        if (is_array($value)) $value = $value[$locale] ?? $value[array_key_first($value)] ?? '';
+        return is_scalar($value) ? mb_substr(trim(html_entity_decode(strip_tags((string)$value), ENT_QUOTES | ENT_HTML5, 'UTF-8')), 0, 500) : '';
+    }
+
+    private function workAccountingContext(object $context, object $submission, ?object $publication, int $chapterId = 0): ?array
+    {
+        if (!$publication) return null;
+        $locale = (string)$submission->getData('locale');
+        $title = $this->accountingText($publication->getData('title'), $locale);
+        $unitId = 'article:' . $submission->getId();
+        $kind = 'article';
+        $containerId = null; $containerTitle = null;
+        $issueId = (int)$publication->getData('issueId');
+        $issue = $issueId > 0 ? Repo::issue()->get($issueId, (int)$context->getId()) : null;
+        if ($issue && (int)$issue->getJournalId() === (int)$context->getId()) {
+            $containerId = (string)$issue->getId();
+            $containerTitle = $this->accountingText($issue->getIssueIdentification(), $locale);
+        }
+        return ['platform' => 'ojs', 'contextId' => (string)$context->getId(), 'contextName' => $this->accountingText($context->getData('name'), $locale),
+            'submissionId' => (string)$submission->getId(), 'publicationId' => (string)$publication->getId(),
+            'unitId' => $unitId, 'unitKind' => $kind, 'title' => $title,
+            'containerId' => $containerId, 'containerKind' => 'issue', 'containerTitle' => $containerTitle];
+    }
+
     public function workflowAssignment(IlluminateRequest $input): JsonResponse
     {
         $context = Application::get()->getRequest()->getContext();
@@ -1361,6 +1414,7 @@ class StudioIntegrationApiController extends PKPBaseController
                 'publicationLanguages' => $publicationLanguages,
                 ...($type === 'TRANSLATION' ? ['sourceLanguage' => $this->translationLanguage((string)$input->input('sourceLanguage')), 'targetLanguage' => $this->translationLanguage((string)$input->input('targetLanguage'))] : []), 'reviewRoundId' => $round ? (int)$round->getId() : null,
                 'reviewRound' => $round ? (int)$round->getRound() : 1];
+            if ($type !== 'SCIENTIFIC_REVIEW') $binding['workContext'] = $this->workAccountingContext($context, $submission, $submission->getCurrentPublication(), 0);
             $payload = rtrim(strtr(base64_encode(json_encode($binding, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
             $signature = hash_hmac('sha256', 'workflow-assignment/1.' . $payload, (string)$this->plugin->getSetting($context->getId(), 'sharedSecret'));
             return response()->json(['externalAssignmentId' => $externalId, 'reviewRound' => $binding['reviewRound'],
@@ -1551,7 +1605,8 @@ class StudioIntegrationApiController extends PKPBaseController
                 }
                 $receipt = ['protocol' => 'omi-assignment-result/1', 'written' => true, 'sourceDigest' => $sourceDigest,
                     'submissionExternalId' => (string)$submissionId, 'reviewAssignmentExternalId' => $externalId,
-                    'assignmentType' => $type, 'anonymityMode' => $review ? 'double_blind' : 'open', 'files' => $receipts, 'translationMetadata' => $metadataReceipt];
+                    'assignmentType' => $type, 'anonymityMode' => $review ? 'double_blind' : 'open', 'files' => $receipts, 'translationMetadata' => $metadataReceipt,
+                    'workContext' => $review ? null : $this->workAccountingContext($context, $current, Repo::publication()->get((int)$binding['publicationId'], $submissionId), (int)($binding['chapterId'] ?? 0))];
                 $this->plugin->updateSetting($context->getId(), $receiptKey, $receipt, 'object');
                 return response()->json($receipt);
             } catch (\Throwable $error) {
