@@ -22,6 +22,12 @@ namespace Illuminate\Http {
         }
     }
 }
+namespace Illuminate\Http\Exceptions {
+    class HttpResponseException extends \RuntimeException {
+        public function __construct(private \Illuminate\Http\JsonResponse $response) { parent::__construct('HTTP response', $response->getStatusCode()); }
+        public function getResponse() { return $this->response; }
+    }
+}
 namespace PKP\core { class PKPBaseController {} class Core { public static function getCurrentDate() { return '2026-11-28 04:00:00'; } } }
 namespace PKP\security { class Role { const ROLE_ID_MANAGER=16, ROLE_ID_SUB_EDITOR=17, ROLE_ID_ASSISTANT=4097, ROLE_ID_AUTHOR=65536, ROLE_ID_REVIEWER=4096; } }
 namespace PKP\submissionFile { class SubmissionFile { const SUBMISSION_FILE_SUBMISSION=2, SUBMISSION_FILE_REVIEW_ATTACHMENT=5, SUBMISSION_FILE_COPYEDIT=9, SUBMISSION_FILE_PRODUCTION_READY=11, SUBMISSION_FILE_REVIEW_REVISION=15; } }
@@ -115,7 +121,13 @@ namespace {
                 public function first($callback=null) { return $this->kind==='user' ? new Record(['id'=>20]) : State::$review; }
             }; }
         }; }
-        public function validate(...$args) { return State::$failSecond && $this->kind==='file' && count(State::$files)===1 ? ['invalid'=>true] : []; }
+        public function validate(...$args) {
+            if ($this->kind !== 'file') return [];
+            $params = $args[1];
+            if (array_key_exists('genreId', $params) && !is_int($params['genreId'])) return ['genreId'=>['integer']];
+            if (($params['assocType'] ?? null) === \APP\core\Application::ASSOC_TYPE_SUBMISSION) return ['assocType'=>['invalid']];
+            return State::$failSecond && count(State::$files)===1 ? ['invalid'=>true] : [];
+        }
         public function newDataObject($params) { return $this->kind==='review' ? new \PKP\submission\reviewAssignment\ReviewAssignment($params) : new Record($params); }
         public function add($record) {
             if ($this->kind==='review') { $record->data['id']=31; $record->data['status']=1; State::$review=$record; return 31; }
@@ -134,7 +146,7 @@ namespace {
         public function insertObject($record) { State::$comments[]=$record->data; }
     }
     function response() { return new class { public function json($data, $status=200) { return new \Illuminate\Http\JsonResponse($data,$status); } }; }
-    function abort($status,$message) { throw new \RuntimeException($message,$status); }
+    function abort($status,$message) { throw new \LogicException('PKPContainer does not implement abort()'); }
     function app() { return new class { public function get($name) { return new class {
         public function add($tmp,$path) { $id=count(State::$storage)+1; State::$storage[$id]=file_get_contents($tmp); return $id; }
         public function get($id) { return (object)['mimetype'=>'application/octet-stream']; }
@@ -183,8 +195,8 @@ namespace {
     State::reset(); $binding=bindTask($controller,'TRANSLATION'); $input=resultInput($binding,'TRANSLATION');
     State::$editor=false; check($controller->assignmentResult(new \Illuminate\Http\Request($input))->status===403,'Revoked editor still authorized');
     State::$editor=true; State::$failSecond=true; $beforeSettings=State::$settings; $beforeMetadata=State::$publication->data;
-    try { $controller->assignmentResult(new \Illuminate\Http\Request($input)); throw new \RuntimeException('Expected second file failure'); }
-    catch (\RuntimeException $e) { check($e->getCode()===422,'Unexpected failure'); }
+    $failed = $controller->assignmentResult(new \Illuminate\Http\Request($input));
+    check($failed->getStatusCode()===422 && $failed->data['error']['code']==='workflow_file_validation_failed' && $failed->data['error']['fields']===['invalid'=>true], 'Native validation response was lost');
     check(State::$files===[] && State::$comments===[] && State::$settings===$beforeSettings && State::$publication->data===$beforeMetadata && State::$storage===[],'Partial return or physical orphan was committed');
     State::reset(); State::$stage=3;
     $binding=bindTask($controller,'SCIENTIFIC_REVIEW'); $input=resultInput($binding,'SCIENTIFIC_REVIEW');
