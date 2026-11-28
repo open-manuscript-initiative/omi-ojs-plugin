@@ -992,7 +992,7 @@ class StudioIntegrationApiController extends PKPBaseController
             'profile' => 'omi-integration/1/ojs',
             'implementation' => [
                 'name' => 'Open Manuscript Studio Integration for OJS',
-                'version' => '1.11.0',
+                'version' => '1.12.0',
                 'platform' => 'ojs',
             ],
             'context' => $this->contextData($context),
