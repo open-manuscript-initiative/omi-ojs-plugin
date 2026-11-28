@@ -10,7 +10,7 @@ The plugin implements the **OMI Integration API v1 / OJS profile** (`omi-integra
 - **Plugin type:** PKP Generic Plugin
 - **OMI protocol:** `omi-integration/1`
 - **Profile:** `omi-integration/1/ojs`
-- **Current source version:** `1.12.0.0`
+- **Current source version:** `1.13.0.0`
 - **License:** GNU General Public License v3.0
 
 The current integration supports role-aware author, editor and reviewer workflows, protected manuscript import, reviewer-scoped file access, native OJS review forms, signed review writeback, direct author submissions, and editor-authenticated publication artifact transfer. Development on `main` may contain improvements that are newer than the latest published release.
@@ -281,3 +281,5 @@ editorial-decision, copyediting-file or proof-approval write API.
 ## Selective metadata reconciliation
 
 Version 1.8 adds authenticated `omi-ojs-metadata/1` compare-and-apply for selected title, subtitle, abstract and keyword fields. It preserves other locales and checks native editorial permissions and snapshot freshness. Publication status, identifiers and contributor identities remain native OJS authority. See [metadata reconciliation](docs/metadata-reconciliation.md).
+
+Work statistics: version 1.13.0.0 adds read-only, HMAC-authenticated work-context lookup for Studio 1.0.0-rc.6 participant statements. Signed assignment bindings retain native article/issue or chapter/volume identity; quantities and downloadable statements are computed in Studio. Native publication and payment approval remain separate.

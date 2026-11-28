@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.0.0 — 2026-11-28
+
+- Add signed read-only work-context lookup for profile translator/language-review statistics in Studio 1.0.0-rc.6.
+- Preserve native article/publication/issue grouping in assignment tokens and result receipts, with fresh editorial authorization and cross-context checks.
+- Prepare the coordinated source version; native production acceptance remains pending.
+
+
 ## 1.12.0.0 — 2026-11-28
 
 - Bind translation tasks to a source/target language pair and the current OJS publication version.

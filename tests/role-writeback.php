@@ -58,6 +58,7 @@ namespace PKP\stageAssignment { class StageAssignment {
 } }
 namespace APP\facades { class Repo {
     public static function query() { return new class { public function addQuery($submission,$stage,$title,$body,$user,$participants,$context,$sendEmail) { \State::$comments[]=['viewable'=>in_array(30,$participants,true),'participants'=>$participants,'body'=>$body]; } }; }
+    public static function issue() { return new \Repository('issue'); }
     public static function publication() { return new \Repository('publication'); }
     public static function galley() { return new class { public function getCollector() { return $this; } public function filterByPublicationIds($ids) { return $this; } public function getMany() { return []; } }; }
     public static function submission() { return new \Repository('submission'); }
@@ -90,6 +91,7 @@ namespace {
             return $this->data[$key] ?? null;
         }
         public function getSupportedSubmissionMetadataLocales() { return ['hu', 'en', 'de']; }
+        public function getIssueIdentification() { return 'Vol 12 (2026) No 2'; }
         public function getCurrentPublication() { return State::$publication; }
     }
     class State {
@@ -97,7 +99,7 @@ namespace {
         public static $review, $publication;
         public static bool $editor=true, $failSecond=false;
         public static int $stage=4;
-        public static function reset() { self::$files=self::$comments=self::$settings=self::$storage=[]; self::$review=null; self::$editor=true; self::$failSecond=false; self::$stage=4; self::$publication=new Record(['id'=>8,'status'=>1,'title'=>['hu'=>'Magyar cím','de'=>'Deutscher Titel'],'abstract'=>['hu'=>'Magyar összefoglaló','de'=>'Zusammenfassung'],'keywords'=>['hu'=>['magyar'],'de'=>['deutsch']]]); }
+        public static function reset() { self::$files=self::$comments=self::$settings=self::$storage=[]; self::$review=null; self::$editor=true; self::$failSecond=false; self::$stage=4; self::$publication=new Record(['id'=>8,'status'=>1,'issueId'=>12,'title'=>['hu'=>'Magyar cím','de'=>'Deutscher Titel'],'abstract'=>['hu'=>'Magyar összefoglaló','de'=>'Zusammenfassung'],'keywords'=>['hu'=>['magyar'],'de'=>['deutsch']]]); }
     }
     class Repository {
         public function __construct(public string $kind) {}
@@ -105,6 +107,7 @@ namespace {
             return match ($this->kind) {
                 'submission' => (int)$id===217 && ($parent===null || (int)$parent===1) ? new Record(['id'=>217,'stageId'=>State::$stage,'locale'=>'hu']) : null,
                 'publication' => State::$publication,
+                'issue' => new Record(['id'=>12,'journalId'=>1]),
                 'review' => (int)$id===31 && ($parent===null || (int)$parent===217) ? State::$review : null,
                 'file' => isset(State::$files[$id]) ? new Record(State::$files[$id]) : null,
                 'user' => in_array((int)$id,[10,20],true) ? new Record(['id'=>(int)$id,'email'=>'participant@example.org']) : null,
@@ -237,4 +240,21 @@ namespace {
     $input=resultInput($binding,'TRANSLATION'); $input['documentTranslationCompleted']=false;
     check($controller->assignmentResult(new \Illuminate\Http\Request($input))->status===422,'Unfinished full-text translation accepted');
     echo "Translation locale isolation, mandatory metadata and full-text scope checks passed\n";
+    State::reset();
+    $bound=bindTask($controller,'LANGUAGE_REVIEW');
+    $nativeTask=['localId'=>'11111111-1111-4111-8111-111111111111','submissionExternalId'=>'217','assignmentToken'=>$bound['assignmentToken']];
+    $contextResult=$controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[$nativeTask]], 'work-contexts'));
+    check($contextResult->status===200 && $contextResult->data['contexts'][0]['context']['submissionId']==='217', 'Bound work context unavailable');
+
+    $origin=$contextResult->data['contexts'][0]['context'];
+    check($origin['unitKind']==='article' && $origin['containerId']==='12' && $origin['containerTitle']==='Vol 12 (2026) No 2', 'Native article/issue identity was not retained');
+    $nativeTask['submissionExternalId']='999';
+    check($controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[$nativeTask]], 'work-contexts'))->status===403, 'Work statement context crossed submissions');
+    State::$editor=false;
+    $nativeTask['submissionExternalId']='217';
+    $revoked=$controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[$nativeTask]], 'work-contexts'));
+    check($revoked->status===200 && $revoked->data['contexts'][0]['context']===null, 'Revoked editor retained fresh work context');
+    check($controller->workContexts(new \Illuminate\Http\Request(['tasks'=>[]], 'work-contexts'))->status===422, 'Empty work context request accepted');
+    echo "Read-only work-context authorization passed\n";
+
 }
